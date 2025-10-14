@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: hpo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: hpo_password
+      POSTGRES_DB: hpo_platform
+    ports:
+      - "5433:5432"  # Mudado para 5433 para evitar conflito com PostgreSQL local
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hpo_user -d hpo_platform"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: hpo-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API (desenvolvimento)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: hpo-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://hpo_user:hpo_password@postgres:5432/hpo_platform?schema=public"
+      REDIS_URL: "redis://redis:6379"
+      NODE_ENV: "development"
+      PORT: 3001
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./src:/app/src
+      - ./prisma:/app/prisma
+      - /app/node_modules
+    command: npm run dev
+
+  # Prisma Studio (opcional - para gerenciar DB visualmente)
+  prisma-studio:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: hpo-prisma-studio
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://hpo_user:hpo_password@postgres:5432/hpo_platform?schema=public"
+    ports:
+      - "5555:5555"
+    volumes:
+      - ./prisma:/app/prisma
+    command: npx prisma studio --port 5555 --browser none
+
+volumes:
+  postgres_data:
+  redis_data:

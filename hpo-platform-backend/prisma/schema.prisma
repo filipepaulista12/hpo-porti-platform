@@ -1,0 +1,564 @@
+// Prisma Schema para HPO Translation Platform
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USERS & AUTHENTICATION
+// ============================================
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  name          String
+  password      String?   // null se login via ORCID
+  orcidId       String?   @unique
+  role          UserRole  @default(TRANSLATOR)
+  
+  // Profile information
+  institution   String?
+  specialty     String?   // Neurologia, Cardiologia, etc
+  country       String?
+  bio           String?   @db.Text
+  avatarUrl     String?
+  
+  // Gamification
+  points        Int       @default(0)
+  level         Int       @default(1)
+  streak        Int       @default(0)
+  lastActiveAt  DateTime?
+  
+  // Metadata
+  isActive      Boolean   @default(true)
+  isVerified    Boolean   @default(false)
+  emailVerified Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // Relations
+  translations  Translation[]
+  validations   Validation[]
+  comments      Comment[]
+  badges        UserBadge[]
+  activities    UserActivity[]
+  
+  // Admin relations
+  conflictVotes     CommitteeVote[]
+  rejectionsMade    Rejection[]      @relation("RejectionAdmin")
+  auditLogs         AdminAuditLog[]
+  syncLogs          SyncLog[]
+  notificationsSent Notification[]
+  conflictsResolved ConflictReview[] @relation("ConflictResolver")
+  
+  @@index([email])
+  @@index([orcidId])
+  @@index([role])
+  @@index([points])
+  @@map("users")
+}
+
+enum UserRole {
+  TRANSLATOR        // Qualquer usuário autenticado
+  REVIEWER          // 50+ traduções aprovadas, 85%+ taxa
+  VALIDATOR         // Especialista convidado
+  MODERATOR         // Triagem inicial
+  COMMITTEE_MEMBER  // Voto em conflitos
+  ADMIN             // Gestores da plataforma
+  SUPER_ADMIN       // Acesso total
+}
+
+// ============================================
+// HPO TERMS
+// ============================================
+
+model HpoTerm {
+  id                String   @id @default(uuid())
+  hpoId             String   @unique // HP:0001298
+  labelEn           String
+  definitionEn      String?  @db.Text
+  synonymsEn        String[] // Array de sinônimos em inglês
+  
+  // Metadata
+  category          String?  // Neurologia, Cardiologia, etc
+  parentId          String?  // Para hierarquia
+  difficulty        Int      @default(3) // 1-5
+  
+  // Status da tradução
+  translationStatus TranslationStatus @default(NOT_TRANSLATED)
+  
+  // HPO metadata
+  hpoVersion        String?
+  isObsolete        Boolean  @default(false)
+  
+  // Timestamps
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  translations      Translation[]
+  parent            HpoTerm?  @relation("TermHierarchy", fields: [parentId], references: [id])
+  children          HpoTerm[] @relation("TermHierarchy")
+  
+  // Admin relations
+  conflictReviews   ConflictReview[]
+  
+  @@index([hpoId])
+  @@index([category])
+  @@index([translationStatus])
+  @@index([difficulty])
+  @@map("hpo_terms")
+}
+
+enum TranslationStatus {
+  NOT_TRANSLATED         // Sem tradução
+  DRAFT                  // Rascunho
+  PENDING_REVIEW         // Aguardando revisão
+  IN_REVIEW              // Em revisão por revisores
+  PENDING_VALIDATION     // Aguardando validação de especialista
+  LEGACY_PENDING         // Tradução legacy aguardando validação
+  APPROVED               // Aprovado e oficial
+  REJECTED               // Rejeitado
+}
+
+// ============================================
+// TRANSLATIONS
+// ============================================
+
+model Translation {
+  id              String    @id @default(uuid())
+  termId          String
+  userId          String
+  
+  // Translation content
+  labelPt         String
+  definitionPt    String?   @db.Text
+  synonymsPt      String[]  // Array de sinônimos em português
+  
+  // Metadata
+  status          TranslationStatus @default(DRAFT)
+  confidence      Int       @default(3) // 1-5 (auto-avaliação)
+  source          TranslationSource @default(MANUAL)
+  isLegacy        Boolean   @default(false) // Marca traduções importadas
+  
+  // AI suggestions (se usado)
+  aiSuggestion    String?   @db.Text
+  aiConfidence    Float?
+  
+  // Quality metrics
+  approvalCount   Int       @default(0)
+  rejectionCount  Int       @default(0)
+  averageRating   Float?
+  
+  // Admin metadata
+  syncedToHpo     Boolean   @default(false)
+  syncedAt        DateTime?
+  approvedBy      String?   // Admin who approved
+  rejectedBy      String?   // Admin who rejected
+  
+  // Timestamps
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  approvedAt      DateTime?
+  
+  // Relations
+  term            HpoTerm   @relation(fields: [termId], references: [id], onDelete: Cascade)
+  user            User      @relation(fields: [userId], references: [id])
+  validations     Validation[]
+  comments        Comment[]
+  
+  // Admin relations
+  rejection       Rejection?
+  conflictReviews ConflictReview[] @relation("ConflictTranslations")
+  committeeVotes  CommitteeVote[]
+  
+  @@index([termId])
+  @@index([userId])
+  @@index([status])
+  @@index([isLegacy])
+  @@map("translations")
+}
+
+enum TranslationSource {
+  MANUAL        // Tradução manual
+  AI_ASSISTED   // Com sugestão de IA
+  IMPORTED      // Importado de fonte externa
+  LEGACY        // Da base existente hp-pt.babelon.tsv
+}
+
+// ============================================
+// VALIDATIONS (Revisões)
+// ============================================
+
+model Validation {
+  id              String    @id @default(uuid())
+  translationId   String
+  validatorId     String
+  
+  // Validation data
+  rating          Int       // 1-5 (Likert scale)
+  decision        ValidationDecision
+  
+  // Feedback
+  comments        String?   @db.Text
+  suggestions     String?   @db.Text
+  
+  // Specific checks
+  accuracyScore   Int?      // 1-5
+  clarityScore    Int?      // 1-5
+  consistencyScore Int?     // 1-5
+  
+  // Metadata
+  timeSpentSeconds Int?
+  createdAt       DateTime  @default(now())
+  
+  // Relations
+  translation     Translation @relation(fields: [translationId], references: [id], onDelete: Cascade)
+  validator       User        @relation(fields: [validatorId], references: [id])
+  
+  @@unique([translationId, validatorId]) // Um validador só pode validar uma vez
+  @@index([translationId])
+  @@index([validatorId])
+  @@index([decision])
+  @@map("validations")
+}
+
+enum ValidationDecision {
+  APPROVED      // Aprovado
+  NEEDS_REVISION // Precisa revisão
+  REJECTED      // Rejeitado
+}
+
+// ============================================
+// COMMENTS & DISCUSSIONS
+// ============================================
+
+model Comment {
+  id              String    @id @default(uuid())
+  translationId   String
+  userId          String
+  
+  content         String    @db.Text
+  parentId        String?   // Para threads/respostas
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  // Relations
+  translation     Translation @relation(fields: [translationId], references: [id], onDelete: Cascade)
+  user            User        @relation(fields: [userId], references: [id])
+  parent          Comment?    @relation("CommentThread", fields: [parentId], references: [id])
+  replies         Comment[]   @relation("CommentThread")
+  
+  @@index([translationId])
+  @@index([userId])
+  @@map("comments")
+}
+
+// ============================================
+// GAMIFICATION
+// ============================================
+
+model Badge {
+  id          String   @id @default(uuid())
+  code        String   @unique // FIRST_TRANSLATION, STREAK_7, etc
+  name        String
+  description String
+  iconUrl     String?
+  points      Int      @default(0)
+  rarity      BadgeRarity @default(COMMON)
+  
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  users       UserBadge[]
+  
+  @@map("badges")
+}
+
+enum BadgeRarity {
+  COMMON
+  RARE
+  EPIC
+  LEGENDARY
+}
+
+model UserBadge {
+  id        String   @id @default(uuid())
+  userId    String
+  badgeId   String
+  earnedAt  DateTime @default(now())
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge     Badge    @relation(fields: [badgeId], references: [id])
+  
+  @@unique([userId, badgeId])
+  @@index([userId])
+  @@map("user_badges")
+}
+
+// ============================================
+// ACTIVITY LOG
+// ============================================
+
+model UserActivity {
+  id          String   @id @default(uuid())
+  userId      String
+  type        ActivityType
+  points      Int      @default(0)
+  metadata    Json?    // Dados extras específicos da atividade
+  
+  createdAt   DateTime @default(now())
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([createdAt])
+  @@map("user_activities")
+}
+
+enum ActivityType {
+  TRANSLATION_CREATED
+  TRANSLATION_APPROVED
+  TRANSLATION_REJECTED
+  VALIDATION_COMPLETED
+  BADGE_EARNED
+  LEVEL_UP
+  STREAK_MILESTONE
+  COMMENT_ADDED
+}
+
+// ============================================
+// SYSTEM CONFIG
+// ============================================
+
+model SystemConfig {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String   @db.Text
+  description String?
+  updatedAt   DateTime @updatedAt
+  
+  @@map("system_config")
+}
+
+// ============================================
+// ADMIN & GOVERNANCE
+// ============================================
+
+// Conflict Resolution - Quando 2+ traduções do mesmo termo
+model ConflictReview {
+  id                    String              @id @default(uuid())
+  hpoTermId             String
+  type                  ConflictType
+  status                ConflictStatus      @default(PENDING_COMMITTEE)
+  priority              Priority            @default(MEDIUM)
+  
+  // Resolução
+  winningTranslationId  String?
+  resolution            String?             @db.Text
+  resolvedBy            String?
+  resolvedAt            DateTime?
+  
+  // Timestamps
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  
+  // Relations
+  hpoTerm               HpoTerm             @relation(fields: [hpoTermId], references: [id])
+  translations          Translation[]       @relation("ConflictTranslations")
+  committeeVotes        CommitteeVote[]
+  resolver              User?               @relation("ConflictResolver", fields: [resolvedBy], references: [id])
+  
+  @@index([hpoTermId])
+  @@index([status])
+  @@index([priority])
+  @@map("conflict_reviews")
+}
+
+enum ConflictType {
+  MULTIPLE_TRANSLATIONS   // 2+ traduções diferentes
+  QUALITY_DISPUTE         // Disputa sobre qualidade
+  TERMINOLOGY_CONFLICT    // Conflito de terminologia médica
+}
+
+enum ConflictStatus {
+  PENDING_COMMITTEE  // Aguardando votação
+  IN_VOTING          // Votação em andamento
+  RESOLVED           // Resolvido
+  ESCALATED          // Escalado para super admin
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// Committee Votes - Votos do comitê em conflitos
+model CommitteeVote {
+  id                String          @id @default(uuid())
+  conflictReviewId  String
+  voterId           String
+  translationId     String?         // null se voto for "criar nova"
+  voteType          VoteType
+  comment           String?         @db.Text
+  votedAt           DateTime        @default(now())
+  
+  // Relations
+  conflictReview    ConflictReview  @relation(fields: [conflictReviewId], references: [id], onDelete: Cascade)
+  voter             User            @relation(fields: [voterId], references: [id])
+  translation       Translation?    @relation(fields: [translationId], references: [id])
+  
+  @@unique([conflictReviewId, voterId]) // 1 voto por membro
+  @@index([conflictReviewId])
+  @@index([voterId])
+  @@map("committee_votes")
+}
+
+enum VoteType {
+  APPROVE_THIS     // Aprovar esta tradução
+  CREATE_NEW       // Criar nova tradução (síntese)
+  ABSTAIN          // Abstenção
+}
+
+// Rejections - Traduções rejeitadas com motivo
+model Rejection {
+  id                String           @id @default(uuid())
+  translationId     String           @unique
+  rejectedBy        String
+  reasonCode        RejectionReason
+  detailedReason    String           @db.Text
+  suggestions       String?          @db.Text
+  canResubmit       Boolean          @default(true)
+  createdAt         DateTime         @default(now())
+  
+  // Relations
+  translation       Translation      @relation(fields: [translationId], references: [id], onDelete: Cascade)
+  admin             User             @relation("RejectionAdmin", fields: [rejectedBy], references: [id])
+  
+  @@index([translationId])
+  @@index([rejectedBy])
+  @@index([reasonCode])
+  @@map("rejections")
+}
+
+enum RejectionReason {
+  INCORRECT_TRANSLATION    // Tradução incorreta
+  POOR_GRAMMAR             // Gramática ruim
+  NOT_MEDICAL_TERM         // Não é termo médico
+  DUPLICATE                // Duplicado
+  OFFENSIVE_CONTENT        // Conteúdo ofensivo
+  SPAM                     // Spam
+  INCONSISTENT             // Inconsistente com outras traduções
+  OTHER                    // Outro motivo
+}
+
+// Admin Audit Log - Log de todas ações administrativas
+model AdminAuditLog {
+  id          String      @id @default(uuid())
+  adminId     String
+  action      AdminAction
+  targetType  String      // Translation, User, HpoTerm, System
+  targetId    String?
+  changes     Json?       // Before/after snapshot
+  reason      String?     @db.Text
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime    @default(now())
+  
+  // Relations
+  admin       User        @relation(fields: [adminId], references: [id])
+  
+  @@index([adminId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([targetType, targetId])
+  @@map("admin_audit_logs")
+}
+
+enum AdminAction {
+  APPROVE_TRANSLATION
+  REJECT_TRANSLATION
+  DELETE_TRANSLATION
+  BAN_USER
+  UNBAN_USER
+  PROMOTE_USER
+  DEMOTE_USER
+  SYNC_TO_HPO
+  RESOLVE_CONFLICT
+  EDIT_TERM
+  SYSTEM_CONFIG
+  BULK_APPROVE
+  BULK_REJECT
+}
+
+// Sync Log - Histórico de sincronizações com HPO
+model SyncLog {
+  id                  String      @id @default(uuid())
+  syncDate            DateTime    @default(now())
+  initiatedBy         String
+  translationsCount   Int
+  babelonFilePath     String?
+  githubPrUrl         String?
+  status              SyncStatus
+  errorMessage        String?     @db.Text
+  completedAt         DateTime?
+  
+  // Relations
+  admin               User        @relation(fields: [initiatedBy], references: [id])
+  
+  @@index([syncDate])
+  @@index([status])
+  @@map("sync_logs")
+}
+
+enum SyncStatus {
+  PENDING
+  GENERATING_FILE
+  CREATING_PR
+  PR_CREATED
+  COMPLETED
+  FAILED
+}
+
+// Notifications - Sistema de notificações
+model Notification {
+  id          String            @id @default(uuid())
+  userId      String
+  type        NotificationType
+  title       String
+  message     String            @db.Text
+  link        String?           // Deep link para página relevante
+  read        Boolean           @default(false)
+  createdAt   DateTime          @default(now())
+  
+  // Relations
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId, read])
+  @@index([createdAt])
+  @@index([type])
+  @@map("notifications")
+}
+
+enum NotificationType {
+  TRANSLATION_APPROVED
+  TRANSLATION_REJECTED
+  VALIDATION_RECEIVED
+  CONFLICT_VOTE_NEEDED
+  LEVEL_UP
+  BADGE_EARNED
+  COMMENT_RECEIVED
+  SYSTEM_ANNOUNCEMENT
+  CONFLICT_RESOLVED
+  SYNC_COMPLETED
+  USER_SUSPENDED
+  USER_PROMOTED
+}
