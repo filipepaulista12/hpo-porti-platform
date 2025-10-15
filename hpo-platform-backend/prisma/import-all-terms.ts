@@ -26,10 +26,16 @@ async function importAllHPOTermsFromDutch() {
   console.log('\n🌍 Importando TODOS os termos HPO oficiais...');
   console.log('📂 Fonte: hp-nl.babelon.tsv (arquivo mais completo: ~31.000 termos)');
   
-  const dutchBabelonPath = path.join(__dirname, '../../hpo-translations', 'babelon', 'hp-nl.babelon.tsv');
+  // ✅ Path ajustado: subir 2 níveis (prisma/ -> backend/ -> hpo_translation/) e entrar em hpo-translations-data/
+  const dutchBabelonPath = path.join(__dirname, '../../hpo-translations-data', 'babelon', 'hp-nl.babelon.tsv');
+  
+  console.log(`🔍 Procurando arquivo em: ${dutchBabelonPath}`);
   
   if (!fs.existsSync(dutchBabelonPath)) {
-    throw new Error(`Arquivo não encontrado: ${dutchBabelonPath}`);
+    console.error(`❌ Arquivo não encontrado: ${dutchBabelonPath}`);
+    console.log('\n💡 SOLUÇÃO: Execute o comando para baixar:');
+    console.log('   Invoke-WebRequest -Uri "https://raw.githubusercontent.com/obophenotype/hpo-translations/main/babelon/hp-nl.babelon.tsv" -OutFile "hpo-translations-data/babelon/hp-nl.babelon.tsv"');
+    throw new Error(`Arquivo hp-nl.babelon.tsv não encontrado em: ${dutchBabelonPath}`);
   }
   
   // Ler e parsear TSV
