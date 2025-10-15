@@ -4,6 +4,8 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 import { requireRole } from '../middleware/permissions';
 import { AppError } from '../middleware/errorHandler';
 import { z } from 'zod';
+import { checkUserPromotions } from '../services/promotion.service';
+import * as strikeService from '../services/strike.service';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -319,6 +321,9 @@ router.post('/translations/:id/approve', requireRole('ADMIN' as any), async (req
       }
     });
 
+    // 🎯 Check for automatic role promotion
+    await checkUserPromotions(translation.userId);
+
     res.json({
       success: true,
       translation: updated,
@@ -530,4 +535,361 @@ router.post('/translations/bulk-approve', requireRole('ADMIN' as any), async (re
   }
 });
 
+// ============================================
+// USER MODERATION (BAN/UNBAN)
+// ============================================
+
+// PUT /api/admin/users/:id/ban - Ban user
+router.put('/users/:id/ban', requireRole('ADMIN' as any), async (req: AuthRequest, res, next) => {
+  try {
+    const { id } = req.params;
+    const schema = z.object({
+      reason: z.string().min(10, 'Ban reason required (min 10 characters)'),
+      notifyUser: z.boolean().default(true)
+    });
+
+    const { reason, notifyUser } = schema.parse(req.body);
+
+    // Get user
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        isBanned: true
+      }
+    });
+
+    if (!user) {
+      throw new AppError('User not found', 404);
+    }
+
+    if (user.isBanned) {
+      throw new AppError('User is already banned', 400);
+    }
+
+    // Cannot ban ADMIN or SUPER_ADMIN
+    if (['ADMIN', 'SUPER_ADMIN'].includes(user.role)) {
+      throw new AppError('Cannot ban admin users', 403);
+    }
+
+    // Ban user
+    await prisma.user.update({
+      where: { id },
+      data: {
+        isBanned: true,
+        bannedAt: new Date(),
+        bannedReason: reason,
+        isActive: false
+      }
+    });
+
+    // Create audit log
+    await prisma.adminAuditLog.create({
+      data: {
+        adminId: req.user!.id,
+        action: 'BAN_USER',
+        targetType: 'User',
+        targetId: id,
+        reason,
+        changes: {
+          before: { isBanned: false, isActive: true },
+          after: { isBanned: true, isActive: false },
+          bannedBy: req.user!.email
+        }
+      }
+    });
+
+    // Send notification to user
+    if (notifyUser) {
+      await prisma.notification.create({
+        data: {
+          userId: id,
+          type: 'ACCOUNT_SUSPENDED',
+          title: '🚫 Conta Suspensa',
+          message: `Sua conta foi suspensa.\nMotivo: ${reason}\n\nPara recursos, entre em contato com os administradores.`,
+          link: '/contact'
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'User banned successfully',
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        isBanned: true,
+        bannedAt: new Date(),
+        bannedReason: reason
+      }
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PUT /api/admin/users/:id/unban - Unban user
+router.put('/users/:id/unban', requireRole('ADMIN' as any), async (req: AuthRequest, res, next) => {
+  try {
+    const { id } = req.params;
+    const schema = z.object({
+      comment: z.string().optional(),
+      notifyUser: z.boolean().default(true)
+    });
+
+    const { comment, notifyUser } = schema.parse(req.body);
+
+    // Get user
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        isBanned: true,
+        bannedReason: true
+      }
+    });
+
+    if (!user) {
+      throw new AppError('User not found', 404);
+    }
+
+    if (!user.isBanned) {
+      throw new AppError('User is not banned', 400);
+    }
+
+    // Unban user
+    await prisma.user.update({
+      where: { id },
+      data: {
+        isBanned: false,
+        bannedAt: null,
+        bannedReason: null,
+        isActive: true
+      }
+    });
+
+    // Create audit log
+    await prisma.adminAuditLog.create({
+      data: {
+        adminId: req.user!.id,
+        action: 'UNBAN_USER',
+        targetType: 'User',
+        targetId: id,
+        reason: comment || 'User unbanned',
+        changes: {
+          before: { isBanned: true, isActive: false, bannedReason: user.bannedReason },
+          after: { isBanned: false, isActive: true },
+          unbannedBy: req.user!.email
+        }
+      }
+    });
+
+    // Send notification to user
+    if (notifyUser) {
+      await prisma.notification.create({
+        data: {
+          userId: id,
+          type: 'ACCOUNT_RESTORED',
+          title: '✅ Conta Restaurada',
+          message: `Sua conta foi reativada. Você pode voltar a usar a plataforma normalmente.${comment ? `\n\nComentário: ${comment}` : ''}`,
+          link: '/dashboard'
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'User unbanned successfully',
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        isBanned: false
+      }
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/admin/users/banned - List banned users
+router.get('/users/banned', requireRole('ADMIN' as any), async (req: AuthRequest, res, next) => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const skip = (page - 1) * limit;
+
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where: { isBanned: true },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          bannedAt: true,
+          bannedReason: true,
+          createdAt: true,
+          _count: {
+            select: {
+              translations: true,
+              validations: true
+            }
+          }
+        },
+        orderBy: { bannedAt: 'desc' },
+        skip,
+        take: limit
+      }),
+      prisma.user.count({ where: { isBanned: true } })
+    ]);
+
+    res.json({
+      success: true,
+      users,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ============================================
+// THREE-STRIKE SYSTEM
+// ============================================
+
+// POST /api/admin/strikes - Create a strike for a user
+router.post('/strikes', async (req: AuthRequest, res, next) => {
+  try {
+    const schema = z.object({
+      userId: z.string().uuid(),
+      reason: z.enum([
+        'LOW_QUALITY_TRANSLATION',
+        'SPAM_SUBMISSIONS',
+        'INAPPROPRIATE_CONTENT',
+        'PLAGIARISM',
+        'MANIPULATION_SYSTEM',
+        'DISRESPECTFUL_BEHAVIOR',
+        'VIOLATION_GUIDELINES',
+        'OTHER'
+      ]),
+      detailedReason: z.string().min(20, 'Detailed reason must be at least 20 characters'),
+      translationId: z.string().uuid().optional(),
+      severity: z.number().min(1).max(3).optional(),
+      expiresInDays: z.number().min(1).max(365).optional()
+    });
+
+    const data = schema.parse(req.body);
+    const adminId = req.user!.id;
+
+    // Calculate expiration if specified
+    const expiresAt = data.expiresInDays ? new Date(Date.now() + data.expiresInDays * 24 * 60 * 60 * 1000) : undefined;
+
+    const result = await strikeService.createStrike({
+      userId: data.userId,
+      adminId,
+      reason: data.reason as any,
+      detailedReason: data.detailedReason,
+      translationId: data.translationId,
+      severity: data.severity || 1,
+      expiresAt
+    });
+
+    res.json({
+      success: true,
+      message: result.isUserBanned
+        ? 'Strike created. User has been automatically banned for 7 days (3rd strike).'
+        : `Strike created. User has ${result.totalActiveStrikes}/3 strikes.`,
+      data: result
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/admin/strikes/user/:userId - Get all strikes for a user
+router.get('/strikes/user/:userId', async (req: AuthRequest, res, next) => {
+  try {
+    const { userId } = req.params;
+    const { activeOnly } = req.query;
+
+    const strikes = activeOnly === 'true'
+      ? await strikeService.getActiveStrikes(userId)
+      : await strikeService.getAllStrikes(userId);
+
+    res.json({
+      success: true,
+      data: {
+        strikes,
+        activeCount: strikes.filter((s: any) => s.isActive).length,
+        totalCount: strikes.length
+      }
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PUT /api/admin/strikes/:strikeId/deactivate - Deactivate a strike
+router.put('/strikes/:strikeId/deactivate', async (req: AuthRequest, res, next) => {
+  try {
+    const { strikeId } = req.params;
+    const adminId = req.user!.id;
+
+    const strike = await strikeService.deactivateStrike(strikeId, adminId);
+
+    res.json({
+      success: true,
+      message: 'Strike deactivated successfully',
+      data: strike
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/admin/strikes/statistics - Get strike statistics
+router.get('/strikes/statistics', requireRole('ADMIN' as any), async (req: AuthRequest, res, next) => {
+  try {
+    const stats = await strikeService.getStrikeStatistics();
+    const atRisk = await strikeService.getUsersAtRisk();
+
+    res.json({
+      success: true,
+      data: {
+        ...stats,
+        usersAtRisk: atRisk.length,
+        atRiskUsers: atRisk.map((u: any) => ({
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          strikes: u.strikes.length,
+          latestStrike: u.strikes[0]
+        }))
+      }
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;
+

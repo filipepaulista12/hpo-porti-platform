@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AppError } from './errorHandler';
 import { UserRole } from '@prisma/client';
+import prisma from '../config/database';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -11,7 +12,7 @@ export interface AuthRequest extends Request {
   };
 }
 
-export const authenticate = (
+export const authenticate = async (
   req: AuthRequest,
   res: Response,
   next: NextFunction
@@ -36,7 +37,35 @@ export const authenticate = (
       role: UserRole;
     };
 
-    req.user = decoded;
+    // Check if user is banned
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        isBanned: true,
+        bannedReason: true
+      }
+    });
+
+    if (!user) {
+      throw new AppError('User not found', 401);
+    }
+
+    if (user.isBanned) {
+      throw new AppError(
+        `Account suspended. Reason: ${user.bannedReason || 'Violation of terms'}`,
+        403
+      );
+    }
+
+    req.user = {
+      id: user.id,
+      email: user.email,
+      role: user.role
+    };
+
     next();
   } catch (error) {
     if (error instanceof jwt.JsonWebTokenError) {
