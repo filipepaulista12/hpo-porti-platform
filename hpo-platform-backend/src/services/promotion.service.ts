@@ -4,7 +4,7 @@
  */
 
 import prisma from '../config/database';
-import { Role } from '@prisma/client';
+import { PrismaClient, UserRole } from '@prisma/client';
 
 // Promotion thresholds
 const PROMOTION_THRESHOLDS = {
@@ -12,14 +12,14 @@ const PROMOTION_THRESHOLDS = {
     minApprovedTranslations: 50,
     minApprovalRate: 85, // 85%
     minLevel: 3,
-    requiredRole: 'TRANSLATOR' as Role
+    requiredRole: 'TRANSLATOR' as UserRole
   },
   COMMITTEE_MEMBER: {
     minApprovedTranslations: 200,
     minApprovalRate: 90, // 90%
     minLevel: 8,
     minValidations: 100,
-    requiredRole: 'REVIEWER' as Role
+    requiredRole: 'REVIEWER' as UserRole
   }
 };
 
@@ -333,7 +333,7 @@ export async function getPromotionProgress(userId: string) {
       : 0;
 
     // Get target thresholds based on current role
-    let nextRole: Role | null = null;
+    let nextRole: UserRole | null = null;
     let threshold: any = null;
 
     if (user.role === 'TRANSLATOR') {

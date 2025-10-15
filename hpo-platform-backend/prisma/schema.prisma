@@ -17,6 +17,7 @@ model User {
   id            String    @id @default(uuid())
   email         String    @unique
   name          String
+  username      String?   @unique // Optional username (for export routes)
   password      String?   // null se login via ORCID
   orcidId       String?   @unique
   role          UserRole  @default(TRANSLATOR)
@@ -33,6 +34,7 @@ model User {
   level         Int       @default(1)
   streak        Int       @default(0)
   lastActiveAt  DateTime?
+  approvedCount Int       @default(0) // Count of approved translations
   
   // Onboarding
   hasCompletedOnboarding Boolean   @default(false)
@@ -41,6 +43,7 @@ model User {
   warningCount  Int       @default(0)
   lastWarningAt DateTime?
   bannedBy      String?   // Admin ID who banned
+  promotedAt    DateTime? // Last promotion date
   
   // Metadata
   isActive      Boolean   @default(true)
@@ -139,6 +142,7 @@ enum TranslationStatus {
   LEGACY_PENDING         // Tradução legacy aguardando validação
   APPROVED               // Aprovado e oficial
   REJECTED               // Rejeitado
+  NEEDS_REVISION         // Precisa revisão (usado em algumas rotas)
 }
 
 // ============================================
@@ -347,6 +351,7 @@ enum ActivityType {
   LEVEL_UP
   STREAK_MILESTONE
   COMMENT_ADDED
+  ROLE_PROMOTION
 }
 
 // ============================================
@@ -485,6 +490,7 @@ model AdminAuditLog {
   targetId    String?
   changes     Json?       // Before/after snapshot
   reason      String?     @db.Text
+  details     String?     @db.Text // Additional details
   ipAddress   String?
   userAgent   String?
   createdAt   DateTime    @default(now())
@@ -513,6 +519,8 @@ enum AdminAction {
   SYSTEM_CONFIG
   BULK_APPROVE
   BULK_REJECT
+  VOTE_ON_CONFLICT
+  DEACTIVATE_STRIKE
 }
 
 // Sync Log - Histórico de sincronizações com HPO
@@ -579,6 +587,9 @@ enum NotificationType {
   USER_PROMOTED
   STRIKE_RECEIVED
   STRIKE_WARNING
+  ACCOUNT_SUSPENDED
+  ACCOUNT_RESTORED
+  ROLE_PROMOTION
 }
 
 // ============================================
