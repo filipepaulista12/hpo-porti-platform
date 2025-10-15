@@ -3,8 +3,10 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
+import http from 'http';
 import { logger } from './utils/logger';
 import { errorHandler } from './middleware/errorHandler';
+import { initializeWebSocket } from './websocket/socket';
 
 // Routes
 import authRoutes from './routes/auth.routes';
@@ -112,15 +114,24 @@ const startServer = async () => {
       process.exit(1);
     });
 
-    const server = app.listen(PORT, () => {
+    // Create HTTP server (needed for WebSocket)
+    const httpServer = http.createServer(app);
+
+    // Initialize WebSocket
+    const wsServer = initializeWebSocket(httpServer);
+    logger.info('🔌 WebSocket server initialized');
+
+    // Start listening
+    httpServer.listen(PORT, () => {
       logger.info(`🚀 Server running on port ${PORT}`);
       logger.info(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
       logger.info(`🌐 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:5173'}`);
+      logger.info(`🔌 WebSocket: ws://localhost:${PORT}/socket.io/`);
       logger.info(`✅ Server started successfully!`);
     });
 
     // Handle server errors
-    server.on('error', (error: any) => {
+    httpServer.on('error', (error: any) => {
       if (error.code === 'EADDRINUSE') {
         logger.error(`Port ${PORT} is already in use`);
       } else {
@@ -132,7 +143,7 @@ const startServer = async () => {
     // Graceful shutdown
     const gracefulShutdown = () => {
       logger.info('Shutting down gracefully...');
-      server.close(() => {
+      httpServer.close(() => {
         logger.info('Server closed');
         process.exit(0);
       });
