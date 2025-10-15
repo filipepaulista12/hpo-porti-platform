@@ -19,6 +19,9 @@ import leaderboardRoutes from './routes/leaderboard.routes';
 import exportRoutes from './routes/export.routes';
 import adminRoutes from './routes/admin.routes';
 import notificationRoutes from './routes/notification.routes';
+import analyticsRoutes from './routes/analytics.routes';
+import commentRoutes from './routes/comment.routes';
+import conflictRoutes from './routes/conflict.routes';
 
 // Load environment variables
 dotenv.config();
@@ -85,6 +88,9 @@ app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/export', exportRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/comments', commentRoutes);
+app.use('/api/conflicts', conflictRoutes);
 
 // 404 handler
 app.use((req: Request, res: Response) => {
