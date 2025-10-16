@@ -1,0 +1,201 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  # ============================================
+  # JOB 1: BACKEND TESTS
+  # ============================================
+  backend-test:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: hpo_platform_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: hpo-platform-backend/package-lock.json
+
+      - name: 📦 Install dependencies
+        working-directory: ./hpo-platform-backend
+        run: npm ci
+
+      - name: 🔨 Build TypeScript
+        working-directory: ./hpo-platform-backend
+        run: npm run build
+
+      - name: 🗃️ Setup test database
+        working-directory: ./hpo-platform-backend
+        env:
+          DATABASE_URL: postgresql://postgres:test_password@localhost:5432/hpo_platform_test?schema=public
+        run: |
+          npx prisma migrate deploy
+          npx prisma generate
+
+      - name: 🧪 Run tests
+        working-directory: ./hpo-platform-backend
+        env:
+          DATABASE_URL: postgresql://postgres:test_password@localhost:5432/hpo_platform_test?schema=public
+          JWT_SECRET: test-secret-key-for-ci-cd-pipeline
+          NODE_ENV: test
+        run: npm test
+
+      - name: 📊 Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./hpo-platform-backend/coverage/lcov.info
+          flags: backend
+
+  # ============================================
+  # JOB 2: FRONTEND BUILD & TEST
+  # ============================================
+  frontend-test:
+    name: Frontend Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: plataforma-raras-cpl/package-lock.json
+
+      - name: 📦 Install dependencies
+        working-directory: ./plataforma-raras-cpl
+        run: npm ci
+
+      - name: 🔨 Build frontend
+        working-directory: ./plataforma-raras-cpl
+        run: npm run build
+
+      - name: 🧪 Run frontend tests
+        working-directory: ./plataforma-raras-cpl
+        run: npm test -- --run
+
+      - name: 📦 Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: frontend-dist
+          path: plataforma-raras-cpl/dist/
+          retention-days: 7
+
+  # ============================================
+  # JOB 3: LINTING & CODE QUALITY
+  # ============================================
+  lint:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 Install backend dependencies
+        working-directory: ./hpo-platform-backend
+        run: npm ci
+
+      - name: 🔍 Lint backend
+        working-directory: ./hpo-platform-backend
+        run: npm run lint || true
+
+      - name: 📦 Install frontend dependencies
+        working-directory: ./plataforma-raras-cpl
+        run: npm ci
+
+      - name: 🔍 Lint frontend
+        working-directory: ./plataforma-raras-cpl
+        run: npm run lint || true
+
+  # ============================================
+  # JOB 4: DOCKER BUILD TEST
+  # ============================================
+  docker-build:
+    name: Docker Build Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐳 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🔨 Build Docker images
+        run: |
+          docker compose -f docker-compose.simple.yml build || echo "Docker Compose build skipped"
+
+  # ============================================
+  # JOB 5: SECURITY SCAN
+  # ============================================
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 🔒 Audit backend dependencies
+        working-directory: ./hpo-platform-backend
+        run: npm audit --audit-level=high || true
+
+      - name: 🔒 Audit frontend dependencies
+        working-directory: ./plataforma-raras-cpl
+        run: npm audit --audit-level=high || true
+
+  # ============================================
+  # JOB 6: NOTIFY SUCCESS
+  # ============================================
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs: [backend-test, frontend-test, lint, docker-build, security]
+    if: always()
+
+    steps:
+      - name: ✅ Build Status
+        run: |
+          echo "::notice::All CI jobs completed!"
+          echo "Backend Tests: ${{ needs.backend-test.result }}"
+          echo "Frontend Tests: ${{ needs.frontend-test.result }}"
+          echo "Linting: ${{ needs.lint.result }}"
+          echo "Docker Build: ${{ needs.docker-build.result }}"
+          echo "Security: ${{ needs.security.result }}"

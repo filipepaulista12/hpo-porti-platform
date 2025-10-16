@@ -8,8 +8,10 @@ const cors_1 = __importDefault(require("cors"));
 const helmet_1 = __importDefault(require("helmet"));
 const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const dotenv_1 = __importDefault(require("dotenv"));
+const http_1 = __importDefault(require("http"));
 const logger_1 = require("./utils/logger");
 const errorHandler_1 = require("./middleware/errorHandler");
+const socket_1 = require("./websocket/socket");
 // Routes
 const auth_routes_1 = __importDefault(require("./routes/auth.routes"));
 const user_routes_1 = __importDefault(require("./routes/user.routes"));
@@ -17,6 +19,14 @@ const term_routes_1 = __importDefault(require("./routes/term.routes"));
 const translation_routes_1 = __importDefault(require("./routes/translation.routes"));
 const validation_routes_1 = __importDefault(require("./routes/validation.routes"));
 const stats_routes_1 = __importDefault(require("./routes/stats.routes"));
+const leaderboard_routes_1 = __importDefault(require("./routes/leaderboard.routes"));
+const export_routes_1 = __importDefault(require("./routes/export.routes"));
+const admin_routes_1 = __importDefault(require("./routes/admin.routes"));
+const notification_routes_1 = __importDefault(require("./routes/notification.routes"));
+const invite_routes_1 = __importDefault(require("./routes/invite.routes"));
+const comment_routes_1 = __importDefault(require("./routes/comment.routes"));
+const conflict_routes_1 = __importDefault(require("./routes/conflict.routes"));
+// NOTE: analytics routes not implemented yet - pending for future sprint
 // Load environment variables
 dotenv_1.default.config();
 const app = (0, express_1.default)();
@@ -24,6 +34,8 @@ const PORT = process.env.PORT || 3001;
 // ============================================
 // MIDDLEWARE
 // ============================================
+// Trust proxy (we're behind Apache reverse proxy)
+app.set('trust proxy', true);
 // Security
 app.use((0, helmet_1.default)());
 // CORS
@@ -35,7 +47,13 @@ app.use((0, cors_1.default)({
 const limiter = (0, express_rate_limit_1.default)({
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15 minutes
     max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
-    message: 'Too many requests from this IP, please try again later.'
+    message: 'Too many requests from this IP, please try again later.',
+    // Use X-Forwarded-For header from trusted proxy
+    standardHeaders: true,
+    legacyHeaders: false,
+    // Skip failed requests (don't count them)
+    skipFailedRequests: false,
+    skipSuccessfulRequests: false
 });
 app.use('/api/', limiter);
 // Body parsing
@@ -68,6 +86,14 @@ app.use('/api/terms', term_routes_1.default);
 app.use('/api/translations', translation_routes_1.default);
 app.use('/api/validations', validation_routes_1.default);
 app.use('/api/stats', stats_routes_1.default);
+app.use('/api/leaderboard', leaderboard_routes_1.default);
+app.use('/api/export', export_routes_1.default);
+app.use('/api/admin', admin_routes_1.default);
+app.use('/api/notifications', notification_routes_1.default);
+app.use('/api/invite', invite_routes_1.default);
+app.use('/api/comments', comment_routes_1.default);
+app.use('/api/conflicts', conflict_routes_1.default);
+// NOTE: analytics routes not implemented yet - pending for future sprint
 // 404 handler
 app.use((req, res) => {
     res.status(404).json({
@@ -91,14 +117,21 @@ const startServer = async () => {
             logger_1.logger.error('Unhandled Rejection at:', { promise, reason });
             process.exit(1);
         });
-        const server = app.listen(PORT, () => {
+        // Create HTTP server (needed for WebSocket)
+        const httpServer = http_1.default.createServer(app);
+        // Initialize WebSocket
+        const wsServer = (0, socket_1.initializeWebSocket)(httpServer);
+        logger_1.logger.info('🔌 WebSocket server initialized');
+        // Start listening
+        httpServer.listen(PORT, () => {
             logger_1.logger.info(`🚀 Server running on port ${PORT}`);
             logger_1.logger.info(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
             logger_1.logger.info(`🌐 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:5173'}`);
+            logger_1.logger.info(`🔌 WebSocket: ws://localhost:${PORT}/socket.io/`);
             logger_1.logger.info(`✅ Server started successfully!`);
         });
         // Handle server errors
-        server.on('error', (error) => {
+        httpServer.on('error', (error) => {
             if (error.code === 'EADDRINUSE') {
                 logger_1.logger.error(`Port ${PORT} is already in use`);
             }
@@ -110,7 +143,7 @@ const startServer = async () => {
         // Graceful shutdown
         const gracefulShutdown = () => {
             logger_1.logger.info('Shutting down gracefully...');
-            server.close(() => {
+            httpServer.close(() => {
                 logger_1.logger.info('Server closed');
                 process.exit(0);
             });

@@ -53,13 +53,13 @@ router.get('/translations', authenticate, async (req: AuthRequest, res, next) =>
     const translations = await prisma.translation.findMany({
       where,
       include: {
-        hpoTerm: true,
+        term: true,
         user: {
           select: {
             id: true,
             username: true,
             email: true,
-            orcid: true
+            orcidId: true
           }
         },
         validations: {
@@ -67,7 +67,7 @@ router.get('/translations', authenticate, async (req: AuthRequest, res, next) =>
             validator: {
               select: {
                 username: true,
-                orcid: true
+                orcidId: true
               }
             }
           }

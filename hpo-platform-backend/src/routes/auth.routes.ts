@@ -5,6 +5,7 @@ import { z } from 'zod';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest, authenticate } from '../middleware/auth';
+import { logger } from '../utils/logger';
 
 const router = Router();
 
@@ -239,6 +240,10 @@ router.get('/orcid/callback', async (req, res, next) => {
       ? 'https://orcid.org' 
       : 'https://sandbox.orcid.org';
 
+    logger.info(`ORCID: Exchanging code for token at ${orcidBaseUrl}/oauth/token`);
+    logger.info(`ORCID: Client ID: ${clientId}`);
+    logger.info(`ORCID: Redirect URI: ${redirectUri}`);
+
     const tokenResponse = await fetch(`${orcidBaseUrl}/oauth/token`, {
       method: 'POST',
       headers: {
@@ -254,46 +259,38 @@ router.get('/orcid/callback', async (req, res, next) => {
       })
     });
 
+    logger.info(`ORCID: Token response status: ${tokenResponse.status}`);
+    logger.info(`ORCID: Response headers: ${JSON.stringify(Object.fromEntries(tokenResponse.headers.entries()))}`);
+
     if (!tokenResponse.ok) {
       const errorData = await tokenResponse.text();
+      logger.error(`ORCID: Token error response: ${errorData}`);
       throw new AppError(`Failed to exchange code for token: ${errorData}`, 400);
     }
 
-    const tokenData: any = await tokenResponse.json();
+    // Get response as text first to log it
+    const responseText = await tokenResponse.text();
+    logger.info(`ORCID: Token response body: ${responseText}`);
+    
+    let tokenData: any;
+    try {
+      tokenData = JSON.parse(responseText);
+    } catch (parseError) {
+      logger.error(`ORCID: Failed to parse token response as JSON. Response was: ${responseText}`);
+      throw new AppError('Invalid response from ORCID - expected JSON but got HTML', 500);
+    }
     const { access_token, orcid, name } = tokenData;
 
     if (!orcid) {
       throw new AppError('ORCID iD not returned', 400);
     }
 
-    // Fetch ORCID profile data
-    const profileResponse = await fetch(`${orcidBaseUrl}/v3.0/${orcid}/person`, {
-      headers: {
-        'Authorization': `Bearer ${access_token}`,
-        'Accept': 'application/json'
-      }
-    });
-
-    let email = `${orcid}@orcid.org`; // Default email
-    let fullName = name || 'ORCID User';
-
-    if (profileResponse.ok) {
-      const profileData: any = await profileResponse.json();
-      
-      // Extract email if available
-      if (profileData.emails?.email?.[0]?.email) {
-        email = profileData.emails.email[0].email;
-      }
-
-      // Extract name
-      if (profileData.name) {
-        const givenNames = profileData.name['given-names']?.value || '';
-        const familyName = profileData.name['family-name']?.value || '';
-        if (givenNames || familyName) {
-          fullName = `${givenNames} ${familyName}`.trim();
-        }
-      }
-    }
+    // Use data from token response (name and orcid are already available)
+    // Note: ORCID /authenticate scope doesn't provide email, so we use orcid@orcid.org
+    const email = `${orcid}@orcid.org`;
+    const fullName = name || 'ORCID User';
+    
+    logger.info(`ORCID: User authenticated - ORCID: ${orcid}, Name: ${fullName}`);
 
     // Check if user exists with this ORCID
     let user = await prisma.user.findUnique({

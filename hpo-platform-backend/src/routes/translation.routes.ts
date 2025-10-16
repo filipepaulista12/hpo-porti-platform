@@ -221,6 +221,95 @@ router.delete('/:id', authenticate, async (req: AuthRequest, res, next) => {
   }
 });
 
+// GET /api/translations - Get translations for review (with filters)
+router.get('/', authenticate, async (req: AuthRequest, res, next) => {
+  try {
+    if (!req.user) {
+      throw new AppError('Not authenticated', 401);
+    }
+
+    // Query params for filtering
+    const status = req.query.status as string | undefined;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const skip = (page - 1) * limit;
+
+    // Build where clause
+    const where: any = {};
+
+    // Filter by status
+    if (status && ['PENDING_REVIEW', 'APPROVED', 'REJECTED', 'NEEDS_REVISION'].includes(status)) {
+      where.status = status;
+    }
+
+    // Exclude user's own translations from review list
+    if (status === 'PENDING_REVIEW') {
+      where.userId = { not: req.user.id };
+    }
+
+    // Get translations with pagination
+    const [translations, total] = await Promise.all([
+      prisma.translation.findMany({
+        where,
+        include: {
+          term: {
+            select: {
+              hpoId: true,
+              labelEn: true,
+              definitionEn: true,
+              synonymsEn: true,
+              category: true
+            }
+          },
+          user: {
+            select: {
+              id: true,
+              name: true,
+              specialty: true
+            }
+          },
+          validations: {
+            select: {
+              id: true,
+              decision: true,
+              rating: true,
+              comments: true,
+              createdAt: true,
+              validator: {
+                select: {
+                  name: true
+                }
+              }
+            },
+            orderBy: {
+              createdAt: 'desc'
+            }
+          }
+        },
+        orderBy: {
+          createdAt: 'desc'
+        },
+        skip,
+        take: limit
+      }),
+      prisma.translation.count({ where })
+    ]);
+
+    res.json({
+      success: true,
+      translations,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // GET /api/translations/my-history - Get user's translation history
 router.get('/my-history', authenticate, async (req: AuthRequest, res, next) => {
   try {

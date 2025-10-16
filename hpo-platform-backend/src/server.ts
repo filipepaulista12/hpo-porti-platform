@@ -19,7 +19,10 @@ import leaderboardRoutes from './routes/leaderboard.routes';
 import exportRoutes from './routes/export.routes';
 import adminRoutes from './routes/admin.routes';
 import notificationRoutes from './routes/notification.routes';
-// NOTE: analytics, comment, conflict routes removed - incompatible with current Prisma schema
+import inviteRoutes from './routes/invite.routes';
+import commentRoutes from './routes/comment.routes';
+import conflictRoutes from './routes/conflict.routes';
+// NOTE: analytics routes not implemented yet - pending for future sprint
 
 // Load environment variables
 dotenv.config();
@@ -30,6 +33,9 @@ const PORT = process.env.PORT || 3001;
 // ============================================
 // MIDDLEWARE
 // ============================================
+
+// Trust proxy (we're behind Apache reverse proxy)
+app.set('trust proxy', true);
 
 // Security
 app.use(helmet());
@@ -44,7 +50,13 @@ app.use(cors({
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15 minutes
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
-  message: 'Too many requests from this IP, please try again later.'
+  message: 'Too many requests from this IP, please try again later.',
+  // Use X-Forwarded-For header from trusted proxy
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Skip failed requests (don't count them)
+  skipFailedRequests: false,
+  skipSuccessfulRequests: false
 });
 app.use('/api/', limiter);
 
@@ -86,7 +98,10 @@ app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/export', exportRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/notifications', notificationRoutes);
-// NOTE: analytics, comment, conflict routes removed - require schema updates
+app.use('/api/invite', inviteRoutes);
+app.use('/api/comments', commentRoutes);
+app.use('/api/conflicts', conflictRoutes);
+// NOTE: analytics routes not implemented yet - pending for future sprint
 
 // 404 handler
 app.use((req: Request, res: Response) => {

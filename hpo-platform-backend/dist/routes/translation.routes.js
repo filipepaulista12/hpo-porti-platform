@@ -202,5 +202,177 @@ router.delete('/:id', auth_1.authenticate, async (req, res, next) => {
         next(error);
     }
 });
+// GET /api/translations - Get translations for review (with filters)
+router.get('/', auth_1.authenticate, async (req, res, next) => {
+    try {
+        if (!req.user) {
+            throw new errorHandler_1.AppError('Not authenticated', 401);
+        }
+        // Query params for filtering
+        const status = req.query.status;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const skip = (page - 1) * limit;
+        // Build where clause
+        const where = {};
+        // Filter by status
+        if (status && ['PENDING_REVIEW', 'APPROVED', 'REJECTED', 'NEEDS_REVISION'].includes(status)) {
+            where.status = status;
+        }
+        // Exclude user's own translations from review list
+        if (status === 'PENDING_REVIEW') {
+            where.userId = { not: req.user.id };
+        }
+        // Get translations with pagination
+        const [translations, total] = await Promise.all([
+            database_1.default.translation.findMany({
+                where,
+                include: {
+                    term: {
+                        select: {
+                            hpoId: true,
+                            labelEn: true,
+                            definitionEn: true,
+                            synonymsEn: true,
+                            category: true
+                        }
+                    },
+                    user: {
+                        select: {
+                            id: true,
+                            name: true,
+                            specialty: true
+                        }
+                    },
+                    validations: {
+                        select: {
+                            id: true,
+                            decision: true,
+                            rating: true,
+                            comments: true,
+                            createdAt: true,
+                            validator: {
+                                select: {
+                                    name: true
+                                }
+                            }
+                        },
+                        orderBy: {
+                            createdAt: 'desc'
+                        }
+                    }
+                },
+                orderBy: {
+                    createdAt: 'desc'
+                },
+                skip,
+                take: limit
+            }),
+            database_1.default.translation.count({ where })
+        ]);
+        res.json({
+            success: true,
+            translations,
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit)
+            }
+        });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+// GET /api/translations/my-history - Get user's translation history
+router.get('/my-history', auth_1.authenticate, async (req, res, next) => {
+    try {
+        if (!req.user) {
+            throw new errorHandler_1.AppError('Not authenticated', 401);
+        }
+        // Query params for filtering
+        const status = req.query.status;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const skip = (page - 1) * limit;
+        // Build where clause
+        const where = {
+            userId: req.user.id
+        };
+        if (status && ['PENDING_REVIEW', 'APPROVED', 'REJECTED', 'NEEDS_REVISION'].includes(status)) {
+            where.status = status;
+        }
+        // Get translations with pagination
+        const [translations, total] = await Promise.all([
+            database_1.default.translation.findMany({
+                where,
+                include: {
+                    term: {
+                        select: {
+                            hpoId: true,
+                            labelEn: true,
+                            definitionEn: true,
+                            category: true
+                        }
+                    },
+                    validations: {
+                        select: {
+                            id: true,
+                            decision: true,
+                            rating: true,
+                            comments: true,
+                            createdAt: true,
+                            validator: {
+                                select: {
+                                    name: true
+                                }
+                            }
+                        },
+                        orderBy: {
+                            createdAt: 'desc'
+                        }
+                    }
+                },
+                orderBy: {
+                    createdAt: 'desc'
+                },
+                skip,
+                take: limit
+            }),
+            database_1.default.translation.count({ where })
+        ]);
+        // Get user stats
+        const [totalTranslations, approvedCount, pendingCount, rejectedCount, needsRevisionCount] = await Promise.all([
+            database_1.default.translation.count({ where: { userId: req.user.id } }),
+            database_1.default.translation.count({ where: { userId: req.user.id, status: 'APPROVED' } }),
+            database_1.default.translation.count({ where: { userId: req.user.id, status: 'PENDING_REVIEW' } }),
+            database_1.default.translation.count({ where: { userId: req.user.id, status: 'REJECTED' } }),
+            database_1.default.translation.count({ where: { userId: req.user.id, status: 'NEEDS_REVISION' } })
+        ]);
+        const stats = {
+            total: totalTranslations,
+            approved: approvedCount,
+            pending: pendingCount,
+            rejected: rejectedCount,
+            needsRevision: needsRevisionCount,
+            approvalRate: totalTranslations > 0 ? Math.round((approvedCount / totalTranslations) * 100) : 0
+        };
+        res.json({
+            success: true,
+            translations,
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit)
+            },
+            stats
+        });
+    }
+    catch (error) {
+        next(error);
+    }
+});
 exports.default = router;
 //# sourceMappingURL=translation.routes.js.map

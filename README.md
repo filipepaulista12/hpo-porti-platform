@@ -372,3 +372,25 @@ Deployment:    ██████████░░░░░░░░░░  50%
 **[🤝 Contribuir](#-contribuir)**
 
 </div>
+
+---
+
+## Documentacao
+
+A documentacao completa esta organizada em `docs/`:
+
+- **[Guias do Usuario](docs/user-guides/)** - Manuais e guias de uso
+- **[Guias do Desenvolvedor](docs/developer/)** - Setup e arquitetura
+- **[Deploy](docs/deployment/)** - Guias de deployment e Docker
+- **[Setup](docs/setup/)** - Configuracao inicial (ORCID, PostgreSQL)
+- **[Testes](docs/testing/)** - Guias de testes
+- **[Arquitetura](docs/architecture/)** - Decisoes tecnicas
+- **[Features](docs/features/)** - Documentacao de funcionalidades
+- **[Historico](docs/history/)** - Relatorios de implementacao
+
+### Documentos Principais
+
+- [PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md) - Documentacao tecnica completa
+- [QUICK_START.md](QUICK_START.md) - Guia de inicio rapido
+- [TODO.md](TODO.md) - Lista de tarefas pendentes
+

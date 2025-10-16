@@ -1,0 +1,78 @@
+# Docker Compose - DESENVOLVIMENTO LOCAL
+# Apenas infraestrutura (PostgreSQL + Redis)
+# Backend e Frontend rodam com `npm run dev` para hot reload
+
+version: '3.8'
+
+services:
+  # ============================================
+  # POSTGRESQL DATABASE
+  # ============================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: hpo-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: hpo_password
+      POSTGRES_DB: hpo_platform
+    ports:
+      - "5433:5432"  # 5433 para não conflitar com PostgreSQL local
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hpo_platform"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hpo-network
+
+  # ============================================
+  # REDIS CACHE
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: hpo-redis-dev
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hpo-network
+
+  # ============================================
+  # PRISMA STUDIO (opcional - gerenciamento visual do DB)
+  # ============================================
+  prisma-studio:
+    image: node:20-alpine
+    container_name: hpo-prisma-studio
+    restart: unless-stopped
+    working_dir: /app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://postgres:hpo_password@postgres:5432/hpo_platform?schema=public"
+    ports:
+      - "5555:5555"
+    volumes:
+      - ./hpo-platform-backend/prisma:/app/prisma
+      - ./hpo-platform-backend/package.json:/app/package.json
+    command: sh -c "npm install -g prisma && npx prisma studio --port 5555 --browser none"
+    networks:
+      - hpo-network
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
+
+networks:
+  hpo-network:
+    driver: bridge

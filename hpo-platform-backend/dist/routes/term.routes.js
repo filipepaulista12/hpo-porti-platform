@@ -167,5 +167,31 @@ router.get('/recommended/for-me', auth_1.authenticate, async (req, res, next) =>
         next(error);
     }
 });
+// GET /api/terms/categories - Get all unique categories
+router.get('/categories', auth_1.authenticate, async (req, res, next) => {
+    try {
+        const categories = await database_1.default.hpoTerm.findMany({
+            select: {
+                category: true
+            },
+            where: {
+                category: {
+                    not: null
+                }
+            },
+            distinct: ['category'],
+            orderBy: {
+                category: 'asc'
+            }
+        });
+        const categoryList = categories
+            .map(t => t.category)
+            .filter(c => c !== null);
+        res.json({ categories: categoryList });
+    }
+    catch (error) {
+        next(error);
+    }
+});
 exports.default = router;
 //# sourceMappingURL=term.routes.js.map

@@ -8,6 +8,7 @@ export interface AuthRequest extends Request {
   user?: {
     id: string;
     email: string;
+    name: string;
     role: UserRole;
   };
 }
@@ -43,6 +44,7 @@ export const authenticate = async (
       select: {
         id: true,
         email: true,
+        name: true,
         role: true,
         isBanned: true,
         bannedReason: true
@@ -63,6 +65,7 @@ export const authenticate = async (
     req.user = {
       id: user.id,
       email: user.email,
+      name: user.name,
       role: user.role
     };
 

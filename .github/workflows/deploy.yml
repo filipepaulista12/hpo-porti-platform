@@ -1,0 +1,81 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  deploy:
+    name: Deploy to Server
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # ============================================
+      # BUILD BACKEND
+      # ============================================
+      - name: 📦 Install backend dependencies
+        working-directory: ./hpo-platform-backend
+        run: npm ci --production
+
+      - name: 🔨 Build backend
+        working-directory: ./hpo-platform-backend
+        run: npm run build
+
+      # ============================================
+      # BUILD FRONTEND
+      # ============================================
+      - name: 📦 Install frontend dependencies
+        working-directory: ./plataforma-raras-cpl
+        run: npm ci
+
+      - name: 🔨 Build frontend
+        working-directory: ./plataforma-raras-cpl
+        env:
+          VITE_API_URL: ${{ secrets.PRODUCTION_API_URL }}
+          VITE_WS_URL: ${{ secrets.PRODUCTION_WS_URL }}
+        run: npm run build
+
+      # ============================================
+      # DEPLOY VIA SSH
+      # ============================================
+      - name: 📤 Deploy to server via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            cd /var/www/hpo-translation
+            git pull origin main
+            
+            # Backend
+            cd hpo-platform-backend
+            npm ci --production
+            npm run build
+            npx prisma migrate deploy
+            pm2 restart hpo-backend
+            
+            # Frontend
+            cd ../plataforma-raras-cpl
+            npm ci
+            npm run build
+            sudo cp -r dist/* /var/www/html/hpo-frontend/
+            
+            echo "✅ Deploy completed!"
+
+      - name: 🔔 Notify deployment
+        if: success()
+        run: |
+          echo "::notice::Deployment to production successful!"

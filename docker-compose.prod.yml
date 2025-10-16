@@ -1,0 +1,150 @@
+# Docker Compose - PRODUÇÃO
+# Todos os serviços em containers: PostgreSQL + Redis + Backend + Frontend + Nginx
+
+version: '3.8'
+
+services:
+  # ============================================
+  # POSTGRESQL DATABASE
+  # ============================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: hpo-postgres-prod
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hpo_password}
+      POSTGRES_DB: ${POSTGRES_DB:-hpo_platform}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-hpo_platform}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hpo-network
+    # Não expor porta publicamente em produção (apenas na rede interna)
+
+  # ============================================
+  # REDIS CACHE
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: hpo-redis-prod
+    restart: always
+    volumes:
+      - redis_prod_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hpo-network
+    # Não expor porta publicamente
+
+  # ============================================
+  # BACKEND API
+  # ============================================
+  backend:
+    build:
+      context: ./hpo-platform-backend
+      dockerfile: Dockerfile.prod
+    container_name: hpo-backend-prod
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-hpo_password}@postgres:5432/${POSTGRES_DB:-hpo_platform}?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      PORT: 3001
+      
+      # CORS
+      FRONTEND_URL: ${FRONTEND_URL:-https://seu-dominio.com}
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://seu-dominio.com}
+      
+      # Email (opcional)
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      EMAIL_FROM: ${EMAIL_FROM:-noreply@hpo-platform.com}
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+      
+      # ORCID OAuth (opcional)
+      ORCID_CLIENT_ID: ${ORCID_CLIENT_ID}
+      ORCID_CLIENT_SECRET: ${ORCID_CLIENT_SECRET}
+      ORCID_REDIRECT_URI: ${ORCID_REDIRECT_URI}
+      ORCID_ENABLED: ${ORCID_ENABLED:-false}
+      
+      # Rate Limiting
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
+      RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-100}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - ./hpo-platform-backend/logs:/app/logs
+    networks:
+      - hpo-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================
+  # FRONTEND (Static Build)
+  # ============================================
+  frontend:
+    build:
+      context: ./plataforma-raras-cpl
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_URL: ${VITE_API_URL:-https://api.seu-dominio.com}
+        VITE_WS_URL: ${VITE_WS_URL:-wss://api.seu-dominio.com}
+    container_name: hpo-frontend-prod
+    restart: always
+    networks:
+      - hpo-network
+
+  # ============================================
+  # NGINX REVERSE PROXY
+  # ============================================
+  nginx:
+    image: nginx:alpine
+    container_name: hpo-nginx-prod
+    restart: always
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    networks:
+      - hpo-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_prod_data:
+  redis_prod_data:
+  nginx_logs:
+
+networks:
+  hpo-network:
+    driver: bridge
