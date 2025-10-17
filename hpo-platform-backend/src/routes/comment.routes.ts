@@ -116,7 +116,7 @@ router.post('/', async (req: AuthRequest, res, next) => {
       }
     }
 
-    res.status(201).json(comment);
+    res.status(201).json({ comment });
   } catch (error) {
     next(error);
   }
@@ -125,6 +125,51 @@ router.post('/', async (req: AuthRequest, res, next) => {
 // ============================================
 // GET COMMENTS
 // ============================================
+
+// GET /api/comments/translation/:id - Get comments for a specific translation
+router.get('/translation/:id', async (req: AuthRequest, res, next) => {
+  try {
+    const translationId = req.params.id;
+
+    // Get all comments for this translation (including replies)
+    const comments = await prisma.comment.findMany({
+      where: {
+        translationId
+        // Include ALL comments (top-level and replies)
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            level: true
+          }
+        },
+        replies: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+                level: true
+              }
+            }
+          },
+          orderBy: { createdAt: 'asc' }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.json({ comments });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // GET /api/comments?translationId=xxx - Get comments for a translation
 router.get('/', async (req: AuthRequest, res, next) => {
@@ -271,6 +316,52 @@ router.patch('/:id', async (req: AuthRequest, res, next) => {
     });
 
     res.json(comment);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PUT /api/comments/:id - Update a comment (alias for PATCH)
+router.put('/:id', async (req: AuthRequest, res, next) => {
+  try {
+    const { id } = req.params;
+    const validatedData = updateCommentSchema.parse(req.body);
+    const userId = req.user!.id;
+
+    // Check if comment exists and belongs to user
+    const existingComment = await prisma.comment.findUnique({
+      where: { id }
+    });
+
+    if (!existingComment) {
+      throw new AppError('Comentário não encontrado', 404);
+    }
+
+    if (existingComment.userId !== userId) {
+      throw new AppError('Você só pode editar seus próprios comentários', 403);
+    }
+
+    // Update comment
+    const comment = await prisma.comment.update({
+      where: { id },
+      data: {
+        content: validatedData.content,
+        updatedAt: new Date()
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            level: true
+          }
+        }
+      }
+    });
+
+    res.json({ comment });
   } catch (error) {
     next(error);
   }

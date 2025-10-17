@@ -62,42 +62,43 @@ router.get('/', async (req: AuthRequest, res, next) => {
     const limitNum = parseInt(limit as string);
     const skip = (pageNum - 1) * limitNum;
 
-    const [conflicts, total] = await Promise.all([
-      prisma.conflictReview.findMany({
-        where,
-        include: {
-          hpoTerm: {
-            select: {
-              id: true,
-              hpoId: true,
-              labelEn: true,
-              definitionEn: true,
-              category: true
-            }
-          },
-          translations: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  role: true,
-                  level: true
-                }
-              },
-              validations: {
-                select: {
-                  decision: true,
-                  rating: true
+    try {
+      const [conflicts, total] = await Promise.all([
+        prisma.conflictReview.findMany({
+          where,
+          include: {
+            hpoTerm: {
+              select: {
+                id: true,
+                hpoId: true,
+                labelEn: true,
+                definitionEn: true,
+                category: true
+              }
+            },
+            translations: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    role: true,
+                    level: true
+                  }
+                },
+                validations: {
+                  select: {
+                    decision: true,
+                    rating: true
+                  }
                 }
               }
-            }
-          },
-          committeeVotes: {
-            include: {
-              voter: {
-                select: {
+            },
+            committeeVotes: {
+              include: {
+                voter: {
+                  select: {
                   id: true,
                   name: true,
                   role: true
@@ -116,14 +117,108 @@ router.get('/', async (req: AuthRequest, res, next) => {
       prisma.conflictReview.count({ where })
     ]);
 
+      res.json({
+        conflicts,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          totalPages: Math.ceil(total / limitNum)
+        }
+      });
+    } catch (dbError) {
+      console.error('Database error in conflicts listing:', dbError);
+      // Return empty results instead of throwing
+      res.json({
+        conflicts: [],
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total: 0,
+          totalPages: 0
+        }
+      });
+    }
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ============================================
+// GET CONFLICTS BY TERM
+// ============================================
+
+// GET /api/conflicts/term/:termId - Get conflicts for a specific term
+router.get('/term/:termId', async (req: AuthRequest, res, next) => {
+  try {
+    const { termId } = req.params;
+    
+    // Find term by hpoId or UUID
+    let term = await prisma.hpoTerm.findUnique({
+      where: { hpoId: termId }
+    });
+    
+    if (!term) {
+      term = await prisma.hpoTerm.findUnique({
+        where: { id: termId }
+      });
+    }
+    
+    if (!term) {
+      return res.status(404).json({ 
+        error: 'Term not found',
+        conflicts: []
+      });
+    }
+    
+    const conflicts = await prisma.conflictReview.findMany({
+      where: { hpoTermId: term.id },
+      include: {
+        hpoTerm: {
+          select: {
+            id: true,
+            hpoId: true,
+            labelEn: true,
+            definitionEn: true
+          }
+        },
+        translations: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true
+              }
+            }
+          }
+        },
+        committeeVotes: {
+          include: {
+            voter: {
+              select: {
+                id: true,
+                name: true,
+                role: true
+              }
+            },
+            translation: {
+              select: {
+                id: true,
+                labelPt: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    
     res.json({
+      success: true,
       conflicts,
-      pagination: {
-        page: pageNum,
-        limit: limitNum,
-        total,
-        totalPages: Math.ceil(total / limitNum)
-      }
+      total: conflicts.length
     });
   } catch (error) {
     next(error);

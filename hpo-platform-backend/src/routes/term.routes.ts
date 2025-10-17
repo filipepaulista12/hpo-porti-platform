@@ -11,39 +11,43 @@ const querySchema = z.object({
   page: z.string().optional().default('1'),
   limit: z.string().optional().default('20'),
   search: z.string().optional(),
+  query: z.string().optional(), // Alias for search
   category: z.string().optional(),
   status: z.string().optional(),
-  difficulty: z.string().optional()
+  difficulty: z.string().optional(),
+  confidenceLevel: z.string().optional() // For filtering
 });
 
-// GET /api/terms - List HPO terms
-router.get('/', authenticate, async (req: AuthRequest, res, next) => {
+// Shared search logic
+const searchTermsHandler = async (req: AuthRequest, res: any, next: any) => {
   try {
-    const query = querySchema.parse(req.query);
-    const page = parseInt(query.page);
-    const limit = parseInt(query.limit);
+    const queryData = querySchema.parse(req.query);
+    const page = parseInt(queryData.page);
+    const limit = parseInt(queryData.limit);
     const skip = (page - 1) * limit;
     
     // Build filters
     const where: any = {};
     
-    if (query.search) {
+    // Use either 'search' or 'query' parameter
+    const searchTerm = queryData.search || queryData.query;
+    if (searchTerm) {
       where.OR = [
-        { hpoId: { contains: query.search, mode: 'insensitive' } },
-        { labelEn: { contains: query.search, mode: 'insensitive' } }
+        { hpoId: { contains: searchTerm, mode: 'insensitive' } },
+        { labelEn: { contains: searchTerm, mode: 'insensitive' } }
       ];
     }
     
-    if (query.category) {
-      where.category = query.category;
+    if (queryData.category) {
+      where.category = queryData.category;
     }
     
-    if (query.status) {
-      where.translationStatus = query.status;
+    if (queryData.status) {
+      where.translationStatus = queryData.status;
     }
     
-    if (query.difficulty) {
-      where.difficulty = parseInt(query.difficulty);
+    if (queryData.difficulty) {
+      where.difficulty = parseInt(queryData.difficulty);
     }
     
     // Get terms with pagination
@@ -79,13 +83,23 @@ router.get('/', authenticate, async (req: AuthRequest, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+};
+
+// GET /api/terms/search - Search HPO terms (alias)
+router.get('/search', authenticate, searchTermsHandler);
+
+// GET /api/terms - List HPO terms (use shared handler)
+router.get('/', authenticate, searchTermsHandler);
 
 // GET /api/terms/:id - Get single term
 router.get('/:id', authenticate, async (req: AuthRequest, res, next) => {
   try {
-    const term = await prisma.hpoTerm.findUnique({
-      where: { id: req.params.id },
+    // Accept both UUID (id) and HPO ID (hpoId like "HP:0000001")
+    const searchId = req.params.id;
+    const isHpoId = searchId.startsWith('HP:');
+    
+    const term = await prisma.hpoTerm.findFirst({
+      where: isHpoId ? { hpoId: searchId } : { id: searchId },
       include: {
         translations: {
           include: {
@@ -130,7 +144,11 @@ router.get('/:id', authenticate, async (req: AuthRequest, res, next) => {
       throw new AppError('Term not found', 404);
     }
     
-    res.json({ term });
+    // Backward compatibility: return both wrapped and flat fields
+    res.json({ 
+      term,
+      ...term // Spread term fields at root level for old tests
+    });
   } catch (error) {
     next(error);
   }

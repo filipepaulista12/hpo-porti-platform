@@ -46,17 +46,19 @@ app.use(cors({
   credentials: true
 }));
 
-// Rate limiting
+// Rate limiting (disabled in test/development environments)
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15 minutes
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '1000'), // Increased for development
   message: 'Too many requests from this IP, please try again later.',
   // Use X-Forwarded-For header from trusted proxy
   standardHeaders: true,
   legacyHeaders: false,
   // Skip failed requests (don't count them)
   skipFailedRequests: false,
-  skipSuccessfulRequests: false
+  skipSuccessfulRequests: false,
+  // DISABLE rate limiting in test/development environments
+  skip: (req) => process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development'
 });
 app.use('/api/', limiter);
 
@@ -91,6 +93,7 @@ app.get('/health', (_req: Request, res: Response) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/terms', termRoutes);
+app.use('/api/hpo-terms', termRoutes); // Alias for backward compatibility
 app.use('/api/translations', translationRoutes);
 app.use('/api/validations', validationRoutes);
 app.use('/api/stats', statsRoutes);

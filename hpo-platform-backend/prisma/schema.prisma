@@ -158,6 +158,7 @@ model Translation {
   labelPt         String
   definitionPt    String?   @db.Text
   synonymsPt      String[]  // Array de sinônimos em português
+  notes           String?   @db.Text  // Additional notes/comments by translator
   
   // Metadata
   status          TranslationStatus @default(DRAFT)

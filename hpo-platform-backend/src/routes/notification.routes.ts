@@ -50,6 +50,7 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response, next) => {
 
     res.json({
       success: true,
+      notifications, // Alias for compatibility
       data: notifications,
       pagination: {
         page,

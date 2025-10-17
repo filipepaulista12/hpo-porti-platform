@@ -78,9 +78,11 @@ router.get('/', authenticate, async (req, res) => {
         return {
           rank: index + 1,
           userId: user.id,
+          id: user.id, // Alias for userId
           name: user.name,
           email: user.email,
           points: user.points,
+          totalXp: user.points, // Alias for points
           level,
           role: user.role,
           stats: {
@@ -151,9 +153,11 @@ router.get('/', authenticate, async (req, res) => {
         currentUserRank = {
           rank: usersAbove + 1,
           userId: currentUser.id,
+          id: currentUser.id, // Alias for userId
           name: currentUser.name,
           email: currentUser.email,
           points: currentUser.points,
+          totalXp: currentUser.points, // Alias for points
           level,
           role: currentUser.role,
           stats: {
@@ -172,6 +176,7 @@ router.get('/', authenticate, async (req, res) => {
 
     res.json({
       success: true,
+      users: leaderboard, // Alias for compatibility
       leaderboard,
       currentUser: currentUserInTop || currentUserRank,
       period,

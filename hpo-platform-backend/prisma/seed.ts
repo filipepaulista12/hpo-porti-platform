@@ -23,7 +23,7 @@ interface BabelonRow {
 async function importAllHPOTerms() {
   console.log('\n📥 FASE 1: Importando TODOS os termos HPO oficiais (inglês)...');
   
-  const babelonPath = path.join(__dirname, '../../hpo-translations', 'babelon', 'hp-pt.babelon.tsv');
+  const babelonPath = path.join(__dirname, '../../hpo-translations-data', 'babelon', 'hp-pt.babelon.tsv');
   
   if (!fs.existsSync(babelonPath)) {
     console.error('❌ Arquivo Babelon não encontrado:', babelonPath);
@@ -110,7 +110,7 @@ async function importAllHPOTerms() {
 async function importPortugueseTranslations(systemUserId: string) {
   console.log('\n📥 FASE 2: Importando traduções portuguesas existentes...');
   
-  const babelonPath = path.join(__dirname, '../../hpo-translations', 'babelon', 'hp-pt.babelon.tsv');
+  const babelonPath = path.join(__dirname, '../../hpo-translations-data', 'babelon', 'hp-pt.babelon.tsv');
   
   const fileContent = fs.readFileSync(babelonPath, 'utf-8');
   const records: BabelonRow[] = parse(fileContent, {
