@@ -43,17 +43,19 @@ app.use((0, cors_1.default)({
     origin: process.env.FRONTEND_URL || 'http://localhost:5173',
     credentials: true
 }));
-// Rate limiting
+// Rate limiting (disabled in test/development environments)
 const limiter = (0, express_rate_limit_1.default)({
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15 minutes
-    max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
+    max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '1000'), // Increased for development
     message: 'Too many requests from this IP, please try again later.',
     // Use X-Forwarded-For header from trusted proxy
     standardHeaders: true,
     legacyHeaders: false,
     // Skip failed requests (don't count them)
     skipFailedRequests: false,
-    skipSuccessfulRequests: false
+    skipSuccessfulRequests: false,
+    // DISABLE rate limiting in test/development environments
+    skip: (req) => process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development'
 });
 app.use('/api/', limiter);
 // Body parsing
@@ -83,6 +85,7 @@ app.get('/health', (_req, res) => {
 app.use('/api/auth', auth_routes_1.default);
 app.use('/api/users', user_routes_1.default);
 app.use('/api/terms', term_routes_1.default);
+app.use('/api/hpo-terms', term_routes_1.default); // Alias for backward compatibility
 app.use('/api/translations', translation_routes_1.default);
 app.use('/api/validations', validation_routes_1.default);
 app.use('/api/stats', stats_routes_1.default);

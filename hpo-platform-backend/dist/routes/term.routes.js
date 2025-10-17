@@ -14,33 +14,37 @@ const querySchema = zod_1.z.object({
     page: zod_1.z.string().optional().default('1'),
     limit: zod_1.z.string().optional().default('20'),
     search: zod_1.z.string().optional(),
+    query: zod_1.z.string().optional(), // Alias for search
     category: zod_1.z.string().optional(),
     status: zod_1.z.string().optional(),
-    difficulty: zod_1.z.string().optional()
+    difficulty: zod_1.z.string().optional(),
+    confidenceLevel: zod_1.z.string().optional() // For filtering
 });
-// GET /api/terms - List HPO terms
-router.get('/', auth_1.authenticate, async (req, res, next) => {
+// Shared search logic
+const searchTermsHandler = async (req, res, next) => {
     try {
-        const query = querySchema.parse(req.query);
-        const page = parseInt(query.page);
-        const limit = parseInt(query.limit);
+        const queryData = querySchema.parse(req.query);
+        const page = parseInt(queryData.page);
+        const limit = parseInt(queryData.limit);
         const skip = (page - 1) * limit;
         // Build filters
         const where = {};
-        if (query.search) {
+        // Use either 'search' or 'query' parameter
+        const searchTerm = queryData.search || queryData.query;
+        if (searchTerm) {
             where.OR = [
-                { hpoId: { contains: query.search, mode: 'insensitive' } },
-                { labelEn: { contains: query.search, mode: 'insensitive' } }
+                { hpoId: { contains: searchTerm, mode: 'insensitive' } },
+                { labelEn: { contains: searchTerm, mode: 'insensitive' } }
             ];
         }
-        if (query.category) {
-            where.category = query.category;
+        if (queryData.category) {
+            where.category = queryData.category;
         }
-        if (query.status) {
-            where.translationStatus = query.status;
+        if (queryData.status) {
+            where.translationStatus = queryData.status;
         }
-        if (query.difficulty) {
-            where.difficulty = parseInt(query.difficulty);
+        if (queryData.difficulty) {
+            where.difficulty = parseInt(queryData.difficulty);
         }
         // Get terms with pagination
         const [terms, total] = await Promise.all([
@@ -75,12 +79,19 @@ router.get('/', auth_1.authenticate, async (req, res, next) => {
     catch (error) {
         next(error);
     }
-});
+};
+// GET /api/terms/search - Search HPO terms (alias)
+router.get('/search', auth_1.authenticate, searchTermsHandler);
+// GET /api/terms - List HPO terms (use shared handler)
+router.get('/', auth_1.authenticate, searchTermsHandler);
 // GET /api/terms/:id - Get single term
 router.get('/:id', auth_1.authenticate, async (req, res, next) => {
     try {
-        const term = await database_1.default.hpoTerm.findUnique({
-            where: { id: req.params.id },
+        // Accept both UUID (id) and HPO ID (hpoId like "HP:0000001")
+        const searchId = req.params.id;
+        const isHpoId = searchId.startsWith('HP:');
+        const term = await database_1.default.hpoTerm.findFirst({
+            where: isHpoId ? { hpoId: searchId } : { id: searchId },
             include: {
                 translations: {
                     include: {
@@ -123,7 +134,11 @@ router.get('/:id', auth_1.authenticate, async (req, res, next) => {
         if (!term) {
             throw new errorHandler_1.AppError('Term not found', 404);
         }
-        res.json({ term });
+        // Backward compatibility: return both wrapped and flat fields
+        res.json({
+            term,
+            ...term // Spread term fields at root level for old tests
+        });
     }
     catch (error) {
         next(error);

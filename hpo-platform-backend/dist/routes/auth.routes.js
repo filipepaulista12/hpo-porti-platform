@@ -14,9 +14,16 @@ const logger_1 = require("../utils/logger");
 const router = (0, express_1.Router)();
 // Validation schemas
 const registerSchema = zod_1.z.object({
-    email: zod_1.z.string().email(),
-    password: zod_1.z.string().min(8),
-    name: zod_1.z.string().min(2),
+    email: zod_1.z.string()
+        .email({ message: 'Invalid email format' })
+        .min(1, { message: 'Email is required' }),
+    password: zod_1.z.string()
+        .min(8, { message: 'Password must be at least 8 characters' })
+        .regex(/[A-Z]/, { message: 'Password must contain at least one uppercase letter' })
+        .regex(/[a-z]/, { message: 'Password must contain at least one lowercase letter' })
+        .regex(/[0-9]/, { message: 'Password must contain at least one number' }),
+    name: zod_1.z.string()
+        .min(2, { message: 'Name must be at least 2 characters' }),
     institution: zod_1.z.string().optional(),
     specialty: zod_1.z.string().optional(),
     country: zod_1.z.string().optional()
@@ -37,7 +44,19 @@ const generateToken = (userId, email, role) => {
 // POST /api/auth/register
 router.post('/register', async (req, res, next) => {
     try {
-        const data = registerSchema.parse(req.body);
+        // Validate request body
+        const validation = registerSchema.safeParse(req.body);
+        if (!validation.success) {
+            const errors = validation.error.errors.map(err => ({
+                field: err.path.join('.'),
+                message: err.message
+            }));
+            return res.status(400).json({
+                error: 'Validation failed',
+                details: errors
+            });
+        }
+        const data = validation.data;
         // Check if user exists
         const existingUser = await database_1.default.user.findUnique({
             where: { email: data.email }
@@ -120,38 +139,6 @@ router.post('/login', async (req, res, next) => {
         next(error);
     }
 });
-// GET /api/auth/me
-router.get('/me', auth_1.authenticate, async (req, res, next) => {
-    try {
-        if (!req.user) {
-            throw new errorHandler_1.AppError('Not authenticated', 401);
-        }
-        const user = await database_1.default.user.findUnique({
-            where: { id: req.user.id },
-            select: {
-                id: true,
-                email: true,
-                name: true,
-                role: true,
-                institution: true,
-                specialty: true,
-                country: true,
-                points: true,
-                level: true,
-                streak: true,
-                isActive: true,
-                createdAt: true
-            }
-        });
-        if (!user) {
-            throw new errorHandler_1.AppError('User not found', 404);
-        }
-        res.json({ user });
-    }
-    catch (error) {
-        next(error);
-    }
-});
 // ============================================
 // ORCID OAuth Integration
 // ============================================
@@ -164,8 +151,9 @@ router.get('/orcid', (req, res) => {
     const redirectUri = process.env.ORCID_REDIRECT_URI || 'http://localhost:3001/api/auth/orcid/callback';
     const scope = '/authenticate';
     const responseType = 'code';
-    // Use sandbox for development, production for live
-    const orcidBaseUrl = process.env.NODE_ENV === 'production'
+    // Use production ORCID URLs (can be overridden with ORCID_USE_PRODUCTION=false)
+    const useProduction = process.env.ORCID_USE_PRODUCTION !== 'false';
+    const orcidBaseUrl = useProduction
         ? 'https://orcid.org'
         : 'https://sandbox.orcid.org';
     if (!clientId) {
@@ -205,7 +193,8 @@ router.get('/orcid/callback', async (req, res, next) => {
             throw new errorHandler_1.AppError('ORCID credentials not configured', 500);
         }
         // Exchange authorization code for access token
-        const orcidBaseUrl = process.env.NODE_ENV === 'production'
+        const useProduction = process.env.ORCID_USE_PRODUCTION !== 'false';
+        const orcidBaseUrl = useProduction
             ? 'https://orcid.org'
             : 'https://sandbox.orcid.org';
         logger_1.logger.info(`ORCID: Exchanging code for token at ${orcidBaseUrl}/oauth/token`);
@@ -289,6 +278,66 @@ router.get('/orcid/callback', async (req, res, next) => {
         // Redirect to frontend with token
         const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
         res.redirect(`${frontendUrl}?orcid_token=${token}&orcid_success=true`);
+    }
+    catch (error) {
+        next(error);
+    }
+});
+// GET /api/auth/me - Get current authenticated user
+router.get('/me', auth_1.authenticate, async (req, res, next) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            throw new errorHandler_1.AppError('User not authenticated', 401);
+        }
+        const user = await database_1.default.user.findUnique({
+            where: { id: userId },
+            select: {
+                id: true,
+                email: true,
+                name: true,
+                role: true,
+                points: true,
+                level: true,
+                institution: true,
+                specialty: true,
+                country: true,
+                orcidId: true,
+                isActive: true,
+                createdAt: true,
+                _count: {
+                    select: {
+                        translations: true,
+                        validations: true,
+                        comments: true
+                    }
+                }
+            }
+        });
+        if (!user) {
+            throw new errorHandler_1.AppError('User not found', 404);
+        }
+        // Calculate level from points
+        const calculatedLevel = Math.floor(user.points / 100) + 1;
+        res.json({
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role,
+            points: user.points,
+            level: calculatedLevel,
+            institution: user.institution,
+            specialty: user.specialty,
+            country: user.country,
+            orcidId: user.orcidId,
+            isActive: user.isActive,
+            createdAt: user.createdAt,
+            stats: {
+                translationsCount: user._count.translations,
+                validationsCount: user._count.validations,
+                commentsCount: user._count.comments
+            }
+        });
     }
     catch (error) {
         next(error);
