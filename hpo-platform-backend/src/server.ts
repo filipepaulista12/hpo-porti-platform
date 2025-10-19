@@ -7,6 +7,8 @@ import http from 'http';
 import { logger } from './utils/logger';
 import { errorHandler } from './middleware/errorHandler';
 import { initializeWebSocket } from './websocket/socket';
+// Analytics middleware - TOTALMENTE DESABILITADO PARA DEBUG (2025-10-18)
+// import { analyticsMiddleware } from './middleware/analytics.middleware.safe';
 
 // Routes
 import authRoutes from './routes/auth.routes';
@@ -22,7 +24,8 @@ import notificationRoutes from './routes/notification.routes';
 import inviteRoutes from './routes/invite.routes';
 import commentRoutes from './routes/comment.routes';
 import conflictRoutes from './routes/conflict.routes';
-// NOTE: analytics routes not implemented yet - pending for future sprint
+import analyticsRoutes from './routes/analytics.routes';
+import testRoutes from './routes/test.routes';
 
 // Load environment variables
 dotenv.config();
@@ -75,6 +78,9 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   next();
 });
 
+// Analytics middleware - DESABILITADO PARA DEBUG (2025-10-18)
+// app.use(analyticsMiddleware);
+
 // ============================================
 // ROUTES
 // ============================================
@@ -104,7 +110,8 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/invite', inviteRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/conflicts', conflictRoutes);
-// NOTE: analytics routes not implemented yet - pending for future sprint
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/test', testRoutes);
 
 // 404 handler
 app.use((req: Request, res: Response) => {
@@ -123,16 +130,16 @@ app.use(errorHandler);
 
 const startServer = async () => {
   try {
-    // Add error handlers BEFORE starting server
-    process.on('uncaughtException', (error) => {
-      logger.error('Uncaught Exception:', error);
-      process.exit(1);
-    });
+    // TEMPORARIAMENTE DESABILITADO: Handlers de erro estavam matando servidor por Prisma warnings
+    // process.on('uncaughtException', (error) => {
+    //   logger.error('Uncaught Exception:', error);
+    //   process.exit(1);
+    // });
 
-    process.on('unhandledRejection', (reason, promise) => {
-      logger.error('Unhandled Rejection at:', { promise, reason });
-      process.exit(1);
-    });
+    // process.on('unhandledRejection', (reason, promise) => {
+    //   logger.error('Unhandled Rejection at:', { promise, reason });
+    //   process.exit(1);
+    // });
 
     // Create HTTP server (needed for WebSocket)
     const httpServer = http.createServer(app);
@@ -148,6 +155,11 @@ const startServer = async () => {
       logger.info(`🌐 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:5173'}`);
       logger.info(`🔌 WebSocket: ws://localhost:${PORT}/socket.io/`);
       logger.info(`✅ Server started successfully!`);
+      
+      // DEBUG: Confirmar que está realmente escutando
+      setTimeout(() => {
+        logger.info(`🔍 DEBUG: Server still alive after 3 seconds`);
+      }, 3000);
     });
 
     // Handle server errors

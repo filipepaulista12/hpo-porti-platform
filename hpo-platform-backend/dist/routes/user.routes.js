@@ -266,5 +266,35 @@ router.get('/:id/badges', auth_1.authenticate, async (req, res, next) => {
         next(error);
     }
 });
+// POST /api/users/complete-onboarding - Mark user's onboarding as completed
+router.post('/complete-onboarding', auth_1.authenticate, async (req, res, next) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ error: 'Not authenticated' });
+        }
+        // Update user's onboarding status
+        const user = await database_1.default.user.update({
+            where: { id: userId },
+            data: {
+                hasCompletedOnboarding: true
+            },
+            select: {
+                id: true,
+                email: true,
+                name: true,
+                hasCompletedOnboarding: true
+            }
+        });
+        res.json({
+            success: true,
+            message: 'Onboarding completed successfully',
+            user
+        });
+    }
+    catch (error) {
+        next(error);
+    }
+});
 exports.default = router;
 //# sourceMappingURL=user.routes.js.map

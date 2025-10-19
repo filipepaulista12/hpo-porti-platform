@@ -28,7 +28,7 @@ router.get('/translations', authenticate, async (req: AuthRequest, res, next) =>
     const where: any = {};
     
     if (status) {
-      where.translationStatus = status;
+      where.status = status;
     }
     
     if (userId) {
@@ -36,7 +36,7 @@ router.get('/translations', authenticate, async (req: AuthRequest, res, next) =>
     }
     
     if (onlyApproved === 'true') {
-      where.translationStatus = 'APPROVED';
+      where.status = 'APPROVED';
     }
     
     if (startDate || endDate) {
@@ -165,7 +165,7 @@ function generateCSV(translations: any[]): string {
       escapeCSV(t.labelPt),
       escapeCSV(t.hpoTerm.definitionEn || ''),
       escapeCSV(t.definitionPt || ''),
-      escapeCSV(t.translationStatus),
+      escapeCSV(t.status),
       escapeCSV(t.confidenceLabel?.toString() || ''),
       escapeCSV(t.confidenceDefinition?.toString() || ''),
       escapeCSV(t.hpoTerm.category || ''),
@@ -202,7 +202,7 @@ function generateJSON(translations: any[]): string {
     metadata: {
       category: t.hpoTerm.category,
       difficulty: t.hpoTerm.difficulty,
-      status: t.translationStatus,
+      status: t.status,
       createdAt: t.createdAt,
       updatedAt: t.updatedAt
     },
@@ -235,7 +235,7 @@ function generateXLIFF(translations: any[]): string {
   const transUnits = translations.map((t, index) => {
     return `    <trans-unit id="${index + 1}" resname="${t.hpoTerm.hpoId}">
       <source xml:lang="en">${escapeXML(t.hpoTerm.labelEn)}</source>
-      <target xml:lang="pt" state="${mapStatusToXLIFFState(t.translationStatus)}">${escapeXML(t.labelPt)}</target>
+      <target xml:lang="pt" state="${mapStatusToXLIFFState(t.status)}">${escapeXML(t.labelPt)}</target>
       <note>${escapeXML(t.hpoTerm.definitionEn || '')}</note>
       <note from="translator">${escapeXML(t.user.username)}</note>
       ${t.user.orcid ? `<note from="orcid">${escapeXML(t.user.orcid)}</note>` : ''}
@@ -282,8 +282,8 @@ function generateBabelon(translations: any[]): string {
     
     // Map internal status to HPO status
     let hpoStatus = 'CANDIDATE';
-    if (t.translationStatus === 'APPROVED') hpoStatus = 'OFFICIAL';
-    else if (t.translationStatus === 'NEEDS_REVISION') hpoStatus = 'CANDIDATE';
+    if (t.status === 'APPROVED') hpoStatus = 'OFFICIAL';
+    else if (t.status === 'NEEDS_REVISION') hpoStatus = 'CANDIDATE';
     
     const translator = t.user.orcid ? `orcid:${t.user.orcid}` : t.user.email;
     
@@ -358,7 +358,7 @@ function generateFiveStars(translations: any[]): string {
       needsRevisionCount.toString(),
       avgRating.toFixed(2),
       qualityScore.toFixed(2),
-      escapeTSV(t.translationStatus),
+      escapeTSV(t.status),
       escapeTSV(t.user.username),
       escapeTSV(t.user.orcid || ''),
       new Date(t.createdAt).toISOString(),
@@ -416,5 +416,215 @@ function escapeXML(str: string): string {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
 }
+
+// GET /api/export/release/babelon-with-orcid - Export in Babelon TSV format with ORCID
+router.get('/release/babelon-with-orcid', authenticate, async (req: AuthRequest, res, next) => {
+  try {
+    // Check if user has ADMIN or higher permission
+    if (!req.user || !['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
+      throw new AppError('Access denied. Admin permission required.', 403);
+    }
+
+    const { startDate, endDate } = req.query;
+
+    // Build query filters for approved translations
+    const where: any = {
+      status: 'APPROVED'
+    };
+
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) {
+        where.createdAt.gte = new Date(startDate as string);
+      }
+      if (endDate) {
+        where.createdAt.lte = new Date(endDate as string);
+      }
+    }
+
+    // Fetch approved translations with user ORCID
+    const translations = await prisma.translation.findMany({
+      where,
+      include: {
+        term: {
+          select: {
+            hpoId: true,
+            labelEn: true,
+            definitionEn: true
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            name: true,
+            orcidId: true,
+            profileJson: true
+          }
+        },
+        validations: {
+          select: {
+            rating: true,
+            decision: true
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    // Helper function to determine translator_expertise based on profile
+    function calculateTranslatorExpertise(profileJson: any): string {
+      if (!profileJson || Object.keys(profileJson).length === 0) {
+        return 'LAYPERSON';
+      }
+
+      const { academicDegree, professionalRole, medicalSpecialty, ehealsScore } = profileJson;
+
+      // PhD with medical specialty = DOMAIN_EXPERT
+      if (academicDegree === 'phd' && medicalSpecialty) {
+        return 'DOMAIN_EXPERT';
+      }
+
+      // Clinician or Researcher with specialty = DOMAIN_EXPERT
+      if ((professionalRole === 'clinician' || professionalRole === 'researcher') && medicalSpecialty) {
+        return 'DOMAIN_EXPERT';
+      }
+
+      // Professor or advanced degree = PROFESSIONAL
+      if (academicDegree === 'master' || professionalRole === 'professor') {
+        return 'PROFESSIONAL';
+      }
+
+      // High eHEALS score = LAYPERSON_WITH_EXPERTISE
+      if (ehealsScore && ehealsScore >= 33) {
+        return 'LAYPERSON_WITH_EXPERTISE';
+      }
+
+      return 'LAYPERSON';
+    }
+
+    // Helper function to calculate translation confidence (0.0-1.0)
+    function calculateTranslationConfidence(
+      confidenceLabel: number,
+      validations: any[]
+    ): number {
+      if (validations.length === 0) {
+        // Base confidence on translator's self-assessment
+        return confidenceLabel / 5;
+      }
+
+      // Average validation ratings
+      const avgRating = validations.reduce((sum, v) => sum + v.rating, 0) / validations.length;
+      const approvalRate = validations.filter(v => v.decision === 'APPROVED').length / validations.length;
+
+      // Combined score: 40% self-assessment + 60% peer review
+      const selfScore = (confidenceLabel / 5) * 0.4;
+      const peerScore = ((avgRating / 5) + approvalRate) / 2 * 0.6;
+
+      return Math.min(1.0, selfScore + peerScore);
+    }
+
+    // Build Babelon TSV content
+    const lines: string[] = [];
+
+    // Header (oficial Babelon format)
+    lines.push([
+      'subject_id',
+      'predicate_id',
+      'source_language',
+      'source_value',
+      'translation_language',
+      'translation_value',
+      'translator',
+      'translator_expertise',
+      'translation_date',
+      'translation_confidence',
+      'translation_precision',
+      'translation_status',
+      'source',
+      'source_version'
+    ].join('\t'));
+
+    // Data rows
+    for (const trans of translations) {
+      // Determine translator (ORCID or internal ID)
+      const translator = trans.user.orcidId 
+        ? `https://orcid.org/${trans.user.orcidId}`
+        : `internal:${trans.user.id}`;
+
+      // Calculate expertise level
+      const translatorExpertise = calculateTranslatorExpertise(trans.user.profileJson);
+
+      // Calculate confidence
+      const translationConfidence = calculateTranslationConfidence(
+        trans.confidence,
+        trans.validations
+      ).toFixed(2);
+
+      // Translation precision (all our translations are EXACT for now)
+      const translationPrecision = 'EXACT';
+
+      // Translation status (OFFICIAL for approved translations)
+      const translationStatus = 'OFFICIAL';
+
+      // Source information
+      const source = 'http://purl.obolibrary.org/obo/hp.owl';
+      const sourceVersion = new Date(trans.createdAt).toISOString().split('T')[0];
+
+      // Label translation row
+      lines.push([
+        trans.term.hpoId,
+        'rdfs:label',
+        'en',
+        escapeTSV(trans.term.labelEn),
+        'pt',
+        escapeTSV(trans.labelPt),
+        translator,
+        translatorExpertise,
+        new Date(trans.createdAt).toISOString().split('T')[0],
+        translationConfidence,
+        translationPrecision,
+        translationStatus,
+        source,
+        sourceVersion
+      ].join('\t'));
+
+      // Definition translation row (if exists)
+      if (trans.definitionPt && trans.term.definitionEn) {
+        lines.push([
+          trans.term.hpoId,
+          'IAO:0000115',
+          'en',
+          escapeTSV(trans.term.definitionEn),
+          'pt',
+          escapeTSV(trans.definitionPt),
+          translator,
+          translatorExpertise,
+          new Date(trans.createdAt).toISOString().split('T')[0],
+          translationConfidence,
+          translationPrecision,
+          translationStatus,
+          source,
+          sourceVersion
+        ].join('\t'));
+      }
+    }
+
+    // Generate filename with timestamp
+    const timestamp = new Date().toISOString().split('T')[0];
+    const filename = `hp-pt-${timestamp}.babelon.tsv`;
+
+    // Set response headers for file download
+    res.setHeader('Content-Type', 'text/tab-separated-values; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    // Send TSV content
+    res.send(lines.join('\n'));
+
+  } catch (error) {
+    next(error);
+  }
+});
 
 export default router;

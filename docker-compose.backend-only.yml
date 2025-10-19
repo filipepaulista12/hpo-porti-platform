@@ -1,0 +1,48 @@
+# Docker Compose - APENAS BACKEND
+# Usa PostgreSQL e Redis já rodando (hpo-postgres e hpo-redis)
+
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./hpo-platform-backend
+      dockerfile: Dockerfile
+    container_name: hpo-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      # Conectar aos containers EXISTENTES pelo nome
+      DATABASE_URL: "postgresql://postgres:hpo_password@hpo-postgres:5432/hpo_platform?schema=public"
+      REDIS_HOST: hpo-redis
+      REDIS_PORT: 6379
+      JWT_SECRET: "development-jwt-secret-change-in-production"
+      FRONTEND_URL: "http://localhost:5173"
+      ORCID_CLIENT_ID: "${ORCID_CLIENT_ID:-}"
+      ORCID_CLIENT_SECRET: "${ORCID_CLIENT_SECRET:-}"
+      ORCID_REDIRECT_URI: "http://localhost:3001/api/auth/orcid/callback"
+      EMAIL_HOST: "smtp.ethereal.email"
+      EMAIL_PORT: 587
+      EMAIL_USER: "${EMAIL_USER:-}"
+      EMAIL_PASSWORD: "${EMAIL_PASSWORD:-}"
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./hpo-platform-backend/src:/app/src
+      - ./hpo-platform-backend/prisma:/app/prisma
+      - /app/node_modules
+    # Conectar à rede dos containers existentes
+    networks:
+      - hpo-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# Usar a rede EXISTENTE onde estão postgres e redis
+networks:
+  hpo-network:
+    name: hpo-platform-backend_default
+    external: true

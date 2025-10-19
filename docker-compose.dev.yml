@@ -48,6 +48,49 @@ services:
       - hpo-network
 
   # ============================================
+  # BACKEND API (Node.js + Express + TypeScript)
+  # ============================================
+  backend:
+    build:
+      context: ./hpo-platform-backend
+      dockerfile: Dockerfile
+    container_name: hpo-backend-dev
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      DATABASE_URL: "postgresql://postgres:hpo_password@postgres:5432/hpo_platform?schema=public"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: "development-jwt-secret-change-in-production"
+      FRONTEND_URL: "http://localhost:5173"
+      ORCID_CLIENT_ID: "${ORCID_CLIENT_ID:-}"
+      ORCID_CLIENT_SECRET: "${ORCID_CLIENT_SECRET:-}"
+      ORCID_REDIRECT_URI: "http://localhost:3001/api/auth/orcid/callback"
+      EMAIL_HOST: "smtp.ethereal.email"
+      EMAIL_PORT: 587
+      EMAIL_USER: "${EMAIL_USER:-}"
+      EMAIL_PASSWORD: "${EMAIL_PASSWORD:-}"
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./hpo-platform-backend/src:/app/src
+      - ./hpo-platform-backend/prisma:/app/prisma
+      - /app/node_modules  # Evitar conflito com node_modules local
+    networks:
+      - hpo-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
   # PRISMA STUDIO (opcional - gerenciamento visual do DB)
   # ============================================
   prisma-studio:

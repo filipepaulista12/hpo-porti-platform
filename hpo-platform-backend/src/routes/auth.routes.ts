@@ -2,6 +2,8 @@ import { Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
+import axios from 'axios';
+import crypto from 'crypto';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest, authenticate } from '../middleware/auth';
@@ -388,6 +390,179 @@ router.get('/me', authenticate, async (req: AuthRequest, res: Response, next) =>
       }
     });
   } catch (error) {
+    next(error);
+  }
+});
+
+// ============================================================================
+// LINKEDIN OAUTH 2.0 INTEGRATION
+// ============================================================================
+
+/**
+ * GET /api/auth/linkedin
+ * Inicia o fluxo OAuth do LinkedIn
+ * Redireciona o usuário para a página de autorização do LinkedIn
+ */
+router.get('/linkedin', (req, res) => {
+  const clientId = process.env.LINKEDIN_CLIENT_ID;
+  const redirectUri = process.env.LINKEDIN_REDIRECT_URI || 'http://localhost:3001/api/auth/linkedin/callback';
+  
+  if (!clientId) {
+    throw new AppError('LinkedIn OAuth not configured. Please set LINKEDIN_CLIENT_ID in .env', 500);
+  }
+  
+  // Generate random state for CSRF protection
+  const state = crypto.randomBytes(16).toString('hex');
+  
+  // Store state in session (or you can use Redis for production)
+  // For simplicity, we'll validate it in the callback using a simple approach
+  
+  const scope = 'r_liteprofile r_emailaddress'; // Permissions needed
+  
+  const authUrl = `https://www.linkedin.com/oauth/v2/authorization?` +
+    `response_type=code` +
+    `&client_id=${clientId}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+    `&state=${state}` +
+    `&scope=${encodeURIComponent(scope)}`;
+  
+  logger.info('LinkedIn OAuth initiated', { state });
+  
+  res.redirect(authUrl);
+});
+
+/**
+ * GET /api/auth/linkedin/callback
+ * Callback após autorização do LinkedIn
+ * Troca o code por access token e cria/atualiza o usuário
+ */
+router.get('/linkedin/callback', async (req, res, next) => {
+  try {
+    const { code, state, error, error_description } = req.query;
+    
+    // Check for errors from LinkedIn
+    if (error) {
+      logger.error('LinkedIn OAuth error', { error, error_description });
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      return res.redirect(`${frontendUrl}/login?error=${error}&message=${encodeURIComponent(error_description as string || 'LinkedIn authentication failed')}`);
+    }
+    
+    if (!code) {
+      throw new AppError('Authorization code not received from LinkedIn', 400);
+    }
+    
+    const clientId = process.env.LINKEDIN_CLIENT_ID;
+    const clientSecret = process.env.LINKEDIN_CLIENT_SECRET;
+    const redirectUri = process.env.LINKEDIN_REDIRECT_URI || 'http://localhost:3001/api/auth/linkedin/callback';
+    
+    if (!clientId || !clientSecret) {
+      throw new AppError('LinkedIn OAuth not properly configured', 500);
+    }
+    
+    // Exchange code for access token
+    logger.info('Exchanging LinkedIn code for access token');
+    
+    const tokenResponse = await axios.post(
+      'https://www.linkedin.com/oauth/v2/accessToken',
+      null,
+      {
+        params: {
+          grant_type: 'authorization_code',
+          code: code as string,
+          redirect_uri: redirectUri,
+          client_id: clientId,
+          client_secret: clientSecret
+        },
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      }
+    );
+    
+    const accessToken = tokenResponse.data.access_token;
+    
+    if (!accessToken) {
+      throw new AppError('Failed to obtain access token from LinkedIn', 500);
+    }
+    
+    // Fetch user profile from LinkedIn
+    logger.info('Fetching LinkedIn profile');
+    
+    const [profileResponse, emailResponse] = await Promise.all([
+      axios.get('https://api.linkedin.com/v2/me', {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      }),
+      axios.get('https://api.linkedin.com/v2/emailAddress?q=members&projection=(elements*(handle~))', {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      })
+    ]);
+    
+    const profile = profileResponse.data;
+    const emailData = emailResponse.data;
+    
+    // Extract email
+    const email = emailData.elements?.[0]?.['handle~']?.emailAddress;
+    
+    if (!email) {
+      throw new AppError('Could not retrieve email from LinkedIn', 400);
+    }
+    
+    // Extract profile data
+    const firstName = profile.localizedFirstName || '';
+    const lastName = profile.localizedLastName || '';
+    const linkedinId = profile.id;
+    
+    logger.info('LinkedIn profile retrieved', { email, linkedinId });
+    
+    // Check if user exists
+    let user = await prisma.user.findUnique({
+      where: { email }
+    });
+    
+    if (user) {
+      // User exists - update LinkedIn ID if not set
+      if (!user.orcidId || !user.orcidId.startsWith('linkedin:')) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            orcidId: `linkedin:${linkedinId}`,
+            lastLoginAt: new Date()
+          }
+        });
+      } else {
+        // Just update last login
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: { lastLoginAt: new Date() }
+        });
+      }
+      
+      logger.info('Existing user logged in via LinkedIn', { userId: user.id, email });
+    } else {
+      // Create new user
+      user = await prisma.user.create({
+        data: {
+          email,
+          name: `${firstName} ${lastName}`.trim() || 'LinkedIn User',
+          orcidId: `linkedin:${linkedinId}`,
+          role: 'TRANSLATOR',
+          password: null, // OAuth users don't have password
+          lastLoginAt: new Date()
+        }
+      });
+      
+      logger.info('New user created via LinkedIn', { userId: user.id, email });
+    }
+    
+    // Generate JWT token
+    const token = generateToken(user.id, user.email, user.role);
+    
+    // Redirect to frontend with token
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    res.redirect(`${frontendUrl}/auth/callback?token=${token}&provider=linkedin`);
+    
+  } catch (error) {
+    logger.error('LinkedIn OAuth callback error', { error });
     next(error);
   }
 });

@@ -3,7 +3,7 @@ import { AuthRequest } from './auth';
 import { AppError } from './errorHandler';
 
 // User roles enum
-enum UserRole {
+export enum UserRole {
   TRANSLATOR = 'TRANSLATOR',
   REVIEWER = 'REVIEWER',
   VALIDATOR = 'VALIDATOR',

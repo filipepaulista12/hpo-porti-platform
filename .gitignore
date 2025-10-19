@@ -1,0 +1,145 @@
+# =====================================
+# PORTI-HPO Monorepo .gitignore
+# =====================================
+
+# Dependencies
+node_modules/
+**/node_modules/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# Logs
+logs/
+*.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+**/backend/.env
+**/frontend/.env
+hpo-platform-backend/.env
+plataforma-raras-cpl/.env
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+.vite/
+*.tsbuildinfo
+.turbo/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+prisma/*.db
+*.db-journal
+
+# Testing
+coverage/
+.nyc_output/
+*.lcov
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# IDE
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Archives & Backups
+.archive/
+*BACKUP*/
+*.bak
+*.backup
+*.old
+*.orig
+
+# Temporary files
+*.tmp
+.temp/
+tmp/
+
+# Uploads
+uploads/
+**/uploads/
+!**/uploads/.gitkeep
+
+# Cache
+.cache/
+.eslintcache
+.stylelintcache
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# macOS
+.AppleDouble
+.LSOverride
+Icon
+
+# Windows
+[Dd]esktop.ini
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# Package manager locks (optional - uncomment if you want to ignore them)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# Sensitive files
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.pdf
+*.doc
+*.docx
+secrets/
+credentials/
+
+# Project specific
+hpo_translation_BACKUP*
+MIE2026_HPO_Paper_Formatted.docx.txt
+VERIFICAR_UPLOAD.txt

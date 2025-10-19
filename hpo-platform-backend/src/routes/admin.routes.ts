@@ -6,6 +6,7 @@ import { AppError } from '../middleware/errorHandler';
 import { z } from 'zod';
 import { checkUserPromotions } from '../services/promotion.service';
 import * as strikeService from '../services/strike.service';
+import EmailService from '../services/email.service';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -307,6 +308,22 @@ router.post('/translations/:id/approve', requireRole('ADMIN' as any), async (req
       }
     });
 
+    // 📧 Send email notification
+    const translator = await prisma.user.findUnique({
+      where: { id: translation.userId },
+      select: { email: true, name: true }
+    });
+    
+    if (translator) {
+      await EmailService.sendTranslationApprovedEmail({
+        to: translator.email,
+        translatorName: translator.name,
+        termLabel: translation.term.labelEn,
+        termId: translation.term.hpoId,
+        points: 100
+      });
+    }
+
     // Create activity log
     await prisma.userActivity.create({
       data: {
@@ -428,6 +445,22 @@ router.post('/translations/:id/reject', requireRole('MODERATOR' as any), async (
         link: `/history`
       }
     });
+
+    // 📧 Send email notification
+    const translator = await prisma.user.findUnique({
+      where: { id: translation.userId },
+      select: { email: true, name: true }
+    });
+    
+    if (translator) {
+      await EmailService.sendTranslationRejectedEmail({
+        to: translator.email,
+        translatorName: translator.name,
+        termLabel: translation.term.labelEn,
+        termId: translation.term.hpoId,
+        reason: detailedReason
+      });
+    }
 
     res.json({
       success: true,
