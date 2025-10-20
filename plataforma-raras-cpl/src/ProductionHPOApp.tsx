@@ -200,7 +200,7 @@ function ProductionHPOApp() {
   const [user, setUser] = useState<User | null>(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(false); // Novo estado para controlar loading
   // Inicia em 'dashboard' se tiver token, senão 'home'
-  const [currentPage, setCurrentPage] = useState<'home' | 'login' | 'register' | 'dashboard' | 'translate' | 'review' | 'leaderboard' | 'history' | 'admin' | 'profile' | 'guidelines' | 'points'>(() => {
+  const [currentPage, setCurrentPage] = useState<'home' | 'login' | 'register' | 'dashboard' | 'translate' | 'review' | 'leaderboard' | 'history' | 'admin' | 'profile' | 'guidelines' | 'points' | 'referral'>(() => {
     const token = TokenStorage.get();
     return (token && !TokenStorage.isExpired()) ? 'dashboard' : 'home';
   });
@@ -1738,6 +1738,36 @@ function ProductionHPOApp() {
               }}
             >
               Ver Histórico
+            </button>
+          </div>
+
+          {/* Referral Card - Task #6 */}
+          <div style={{
+            backgroundColor: 'white',
+            padding: '25px',
+            borderRadius: '12px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+            textAlign: 'center',
+            border: '2px solid #ec4899'
+          }}>
+            <div style={{ fontSize: '3rem', marginBottom: '15px' }}>💌</div>
+            <h3 style={{ margin: '0 0 10px 0', color: '#1f2937' }}>Convidar Amigos</h3>
+            <p style={{ color: '#64748b', fontSize: '14px', marginBottom: '20px' }}>
+              Ganhe <strong style={{ color: '#10b981' }}>+75 pontos</strong> por cada amigo
+            </p>
+            <button
+              onClick={() => setCurrentPage('referral')}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: '#ec4899',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontWeight: '500'
+              }}
+            >
+              Convidar
             </button>
           </div>
         </div>
@@ -5711,6 +5741,383 @@ function ProductionHPOApp() {
   };
 
   // ============================================
+  // REFERRAL PAGE (Sistema de Convites) - Task #6
+  // ============================================
+  const ReferralPage = () => {
+    const [email, setEmail] = useState('');
+    const [sending, setSending] = useState(false);
+    const [invites, setInvites] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    const REFERRAL_POINTS = 75; // Points per successful referral
+
+    useEffect(() => {
+      loadInvites();
+    }, []);
+
+    const loadInvites = async () => {
+      try {
+        setLoading(true);
+        const response = await fetch(`${API_BASE_URL}/api/referrals/my-invites`, {
+          headers: TokenStorage.getAuthHeader()
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          setInvites(data.invites || []);
+        }
+      } catch (error) {
+        console.error('Error loading invites:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    const handleSendInvite = async () => {
+      if (!email || !email.includes('@')) {
+        ToastService.warning('Por favor, insira um email válido');
+        return;
+      }
+
+      setSending(true);
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/referrals/invite`, {
+          method: 'POST',
+          headers: {
+            ...TokenStorage.getAuthHeader(),
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ email })
+        });
+
+        if (response.ok) {
+          ToastService.success(`✉️ Convite enviado para ${email}!`);
+          setEmail('');
+          loadInvites(); // Reload list
+        } else {
+          const error = await response.json();
+          throw new Error(error.message || 'Erro ao enviar convite');
+        }
+      } catch (error: any) {
+        ToastService.error(ErrorTranslator.translate(error));
+      } finally {
+        setSending(false);
+      }
+    };
+
+    const stats = {
+      total: invites.length,
+      pending: invites.filter(i => i.status === 'PENDING').length,
+      accepted: invites.filter(i => i.status === 'ACCEPTED').length,
+      registered: invites.filter(i => i.status === 'REGISTERED').length,
+      pointsEarned: invites.filter(i => i.status === 'ACCEPTED').length * REFERRAL_POINTS
+    };
+
+    return (
+      <div style={{ backgroundColor: '#f8fafc', minHeight: 'calc(100vh - 80px)', padding: '40px 20px' }}>
+        <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+          <Breadcrumbs items={[
+            { label: 'Dashboard', page: 'dashboard' },
+            { label: 'Convidar Amigos' }
+          ]} />
+
+          {/* Header */}
+          <div style={{
+            background: 'linear-gradient(135deg, #ec4899 0%, #db2777 100%)',
+            borderRadius: '16px',
+            padding: '40px',
+            color: 'white',
+            marginTop: '20px',
+            boxShadow: '0 10px 25px rgba(236, 72, 153, 0.3)'
+          }}>
+            <h1 style={{ margin: 0, fontSize: '36px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '15px' }}>
+              💌 Convide Amigos
+            </h1>
+            <p style={{ margin: '10px 0 0 0', fontSize: '18px', opacity: 0.95 }}>
+              Ganhe <strong>+{REFERRAL_POINTS} pontos</strong> por cada amigo que se registrar e fazer sua primeira contribuição!
+            </p>
+          </div>
+
+          {/* Stats Cards */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: '20px',
+            marginTop: '30px'
+          }}>
+            <div style={{
+              backgroundColor: 'white',
+              borderRadius: '12px',
+              padding: '25px',
+              boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+              textAlign: 'center'
+            }}>
+              <div style={{ fontSize: '36px', marginBottom: '10px' }}>📧</div>
+              <div style={{ fontSize: '32px', fontWeight: '700', color: '#6366f1' }}>{stats.total}</div>
+              <div style={{ fontSize: '14px', color: '#6b7280', marginTop: '5px' }}>Convites Enviados</div>
+            </div>
+
+            <div style={{
+              backgroundColor: 'white',
+              borderRadius: '12px',
+              padding: '25px',
+              boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+              textAlign: 'center'
+            }}>
+              <div style={{ fontSize: '36px', marginBottom: '10px' }}>⏳</div>
+              <div style={{ fontSize: '32px', fontWeight: '700', color: '#fbbf24' }}>{stats.pending}</div>
+              <div style={{ fontSize: '14px', color: '#6b7280', marginTop: '5px' }}>Pendentes</div>
+            </div>
+
+            <div style={{
+              backgroundColor: 'white',
+              borderRadius: '12px',
+              padding: '25px',
+              boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+              textAlign: 'center'
+            }}>
+              <div style={{ fontSize: '36px', marginBottom: '10px' }}>✅</div>
+              <div style={{ fontSize: '32px', fontWeight: '700', color: '#10b981' }}>{stats.accepted}</div>
+              <div style={{ fontSize: '14px', color: '#6b7280', marginTop: '5px' }}>Aceitos</div>
+            </div>
+
+            <div style={{
+              backgroundColor: 'white',
+              borderRadius: '12px',
+              padding: '25px',
+              boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+              textAlign: 'center',
+              border: '2px solid #10b981'
+            }}>
+              <div style={{ fontSize: '36px', marginBottom: '10px' }}>🏆</div>
+              <div style={{ fontSize: '32px', fontWeight: '700', color: '#10b981' }}>{stats.pointsEarned}</div>
+              <div style={{ fontSize: '14px', color: '#6b7280', marginTop: '5px' }}>Pontos Ganhos</div>
+            </div>
+          </div>
+
+          {/* Invite Form */}
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '16px',
+            padding: '30px',
+            marginTop: '30px',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+          }}>
+            <h2 style={{ margin: '0 0 20px 0', fontSize: '24px', fontWeight: '700', color: '#1f2937' }}>
+              ✉️ Enviar Convite
+            </h2>
+            <p style={{ margin: '0 0 25px 0', color: '#6b7280', fontSize: '14px' }}>
+              Digite o email de um amigo que você gostaria de convidar para a plataforma
+            </p>
+
+            <div style={{ display: 'flex', gap: '15px', alignItems: 'end', flexWrap: 'wrap' }}>
+              <div style={{ flex: '1 1 300px' }}>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  color: '#374151'
+                }}>
+                  Email do Amigo
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleSendInvite()}
+                  placeholder="exemplo@email.com"
+                  disabled={sending}
+                  style={{
+                    width: '100%',
+                    padding: '12px 16px',
+                    border: '2px solid #e5e7eb',
+                    borderRadius: '8px',
+                    fontSize: '16px',
+                    fontFamily: 'inherit'
+                  }}
+                />
+              </div>
+
+              <button
+                onClick={handleSendInvite}
+                disabled={sending || !email}
+                style={{
+                  padding: '12px 32px',
+                  backgroundColor: sending || !email ? '#9ca3af' : '#ec4899',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '16px',
+                  fontWeight: '600',
+                  cursor: sending || !email ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 4px 12px rgba(236, 72, 153, 0.3)',
+                  transition: 'all 0.3s ease'
+                }}
+                onMouseEnter={(e) => {
+                  if (!sending && email) {
+                    e.currentTarget.style.transform = 'translateY(-2px)';
+                    e.currentTarget.style.backgroundColor = '#db2777';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  if (!sending && email) e.currentTarget.style.backgroundColor = '#ec4899';
+                }}
+              >
+                {sending ? '📤 Enviando...' : '📧 Enviar Convite'}
+              </button>
+            </div>
+
+            {/* Info Box */}
+            <div style={{
+              marginTop: '25px',
+              padding: '20px',
+              backgroundColor: '#eff6ff',
+              borderRadius: '8px',
+              border: '1px solid #bfdbfe'
+            }}>
+              <div style={{ fontSize: '14px', color: '#1e3a8a', lineHeight: '1.6' }}>
+                <strong>💡 Como funciona:</strong>
+                <ul style={{ margin: '10px 0 0 20px', paddingLeft: '0' }}>
+                  <li>Seu amigo receberá um email com link de convite único</li>
+                  <li>Ao se registrar usando seu link, ele ganha um bônus inicial</li>
+                  <li>Quando ele fizer sua primeira contribuição (tradução ou revisão), você ganha <strong>+{REFERRAL_POINTS} pontos</strong></li>
+                  <li>Não há limite de convites! Convide quantos amigos quiser 🎉</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          {/* Invites History */}
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '16px',
+            padding: '30px',
+            marginTop: '30px',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+          }}>
+            <h2 style={{ margin: '0 0 20px 0', fontSize: '24px', fontWeight: '700', color: '#1f2937' }}>
+              📋 Histórico de Convites
+            </h2>
+
+            {loading ? (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                <div style={{ fontSize: '48px', marginBottom: '15px' }}>⏳</div>
+                <p>Carregando convites...</p>
+              </div>
+            ) : invites.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '60px 20px', color: '#6b7280' }}>
+                <div style={{ fontSize: '64px', marginBottom: '15px' }}>📭</div>
+                <h3 style={{ margin: '0 0 10px 0', fontSize: '20px', color: '#1f2937' }}>
+                  Nenhum convite enviado ainda
+                </h3>
+                <p style={{ margin: 0, fontSize: '14px' }}>
+                  Comece convidando seus amigos para ganhar pontos!
+                </p>
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{
+                  width: '100%',
+                  borderCollapse: 'collapse',
+                  fontSize: '14px'
+                }}>
+                  <thead>
+                    <tr style={{ backgroundColor: theme === 'dark' ? '#1f2937' : '#f9fafb', borderBottom: '2px solid #e5e7eb' }}>
+                      <th style={{ padding: '15px', textAlign: 'left', fontWeight: '600', color: theme === 'dark' ? '#f9fafb' : '#374151' }}>
+                        Email
+                      </th>
+                      <th style={{ padding: '15px', textAlign: 'center', fontWeight: '600', color: theme === 'dark' ? '#f9fafb' : '#374151' }}>
+                        Status
+                      </th>
+                      <th style={{ padding: '15px', textAlign: 'center', fontWeight: '600', color: theme === 'dark' ? '#f9fafb' : '#374151' }}>
+                        Data Envio
+                      </th>
+                      <th style={{ padding: '15px', textAlign: 'center', fontWeight: '600', color: theme === 'dark' ? '#f9fafb' : '#374151' }}>
+                        Pontos
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {invites.map((invite, index) => {
+                      const statusConfig: Record<string, { label: string; color: string; bg: string; emoji: string }> = {
+                        PENDING: { label: 'Pendente', color: '#92400e', bg: '#fef3c7', emoji: '⏳' },
+                        REGISTERED: { label: 'Registrado', color: '#1e40af', bg: '#dbeafe', emoji: '📝' },
+                        ACCEPTED: { label: 'Aceito', color: '#15803d', bg: '#dcfce7', emoji: '✅' }
+                      };
+                      const status = statusConfig[invite.status] || statusConfig['PENDING'];
+
+                      return (
+                        <tr key={invite.id || index} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                          <td style={{ padding: '15px', color: theme === 'dark' ? '#f9fafb' : '#1f2937' }}>
+                            {invite.email}
+                          </td>
+                          <td style={{ padding: '15px', textAlign: 'center' }}>
+                            <span style={{
+                              padding: '6px 12px',
+                              backgroundColor: status.bg,
+                              color: status.color,
+                              borderRadius: '12px',
+                              fontSize: '12px',
+                              fontWeight: '600',
+                              display: 'inline-block'
+                            }}>
+                              {status.emoji} {status.label}
+                            </span>
+                          </td>
+                          <td style={{ padding: '15px', textAlign: 'center', color: '#6b7280' }}>
+                            {new Date(invite.createdAt).toLocaleDateString('pt-BR')}
+                          </td>
+                          <td style={{ padding: '15px', textAlign: 'center', fontWeight: '600' }}>
+                            {invite.status === 'ACCEPTED' ? (
+                              <span style={{ color: '#10b981' }}>+{REFERRAL_POINTS}</span>
+                            ) : (
+                              <span style={{ color: '#9ca3af' }}>-</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Share Options (Future) */}
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '16px',
+            padding: '30px',
+            marginTop: '30px',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+            textAlign: 'center'
+          }}>
+            <h3 style={{ margin: '0 0 15px 0', fontSize: '20px', fontWeight: '700', color: '#1f2937' }}>
+              Compartilhe nas Redes Sociais 🌐
+            </h3>
+            <p style={{ margin: '0 0 20px 0', color: '#6b7280', fontSize: '14px' }}>
+              Em breve: compartilhe diretamente no Twitter, LinkedIn e WhatsApp!
+            </p>
+            <div style={{ display: 'flex', gap: '15px', justifyContent: 'center', opacity: 0.5 }}>
+              <button disabled style={{ padding: '12px 24px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'not-allowed' }}>
+                🐦 Twitter
+              </button>
+              <button disabled style={{ padding: '12px 24px', backgroundColor: '#0a66c2', color: 'white', border: 'none', borderRadius: '8px', cursor: 'not-allowed' }}>
+                💼 LinkedIn
+              </button>
+              <button disabled style={{ padding: '12px 24px', backgroundColor: '#25d366', color: 'white', border: 'none', borderRadius: '8px', cursor: 'not-allowed' }}>
+                💬 WhatsApp
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ============================================
   // HEADER
   // ============================================
   const Header = () => (
@@ -7742,6 +8149,7 @@ function ProductionHPOApp() {
         )}
         {currentPage === 'guidelines' && user && <GuidelinesPage onBack={() => setCurrentPage('dashboard')} />}
         {currentPage === 'points' && user && <GamificationPage />}
+        {currentPage === 'referral' && user && <ReferralPage />}
       </main>
 
       {/* Toast Notifications */}
