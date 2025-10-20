@@ -30,6 +30,8 @@ const comment_routes_1 = __importDefault(require("./routes/comment.routes"));
 const conflict_routes_1 = __importDefault(require("./routes/conflict.routes"));
 const analytics_routes_1 = __importDefault(require("./routes/analytics.routes"));
 const test_routes_1 = __importDefault(require("./routes/test.routes"));
+const referral_routes_1 = __importDefault(require("./routes/referral.routes"));
+const gamification_routes_1 = __importDefault(require("./routes/gamification.routes"));
 // Load environment variables
 dotenv_1.default.config();
 const app = (0, express_1.default)();
@@ -102,6 +104,8 @@ app.use('/api/invite', invite_routes_1.default);
 app.use('/api/comments', comment_routes_1.default);
 app.use('/api/conflicts', conflict_routes_1.default);
 app.use('/api/analytics', analytics_routes_1.default);
+app.use('/api/referrals', referral_routes_1.default);
+app.use('/api/gamification', gamification_routes_1.default);
 app.use('/api/test', test_routes_1.default);
 // 404 handler
 app.use((req, res) => {

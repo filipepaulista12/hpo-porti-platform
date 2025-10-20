@@ -924,5 +924,468 @@ router.get('/strikes/statistics', requireRole('ADMIN' as any), async (req: AuthR
   }
 });
 
+// ============================================
+// USER MANAGEMENT
+// ============================================
+
+// GET /api/admin/users - List users with filters and pagination
+router.get('/users', async (req: AuthRequest, res, next) => {
+  try {
+    const { 
+      page = '1', 
+      limit = '50', 
+      search = '', 
+      role = 'all', 
+      status = 'all' 
+    } = req.query;
+
+    const pageNum = parseInt(page as string);
+    const limitNum = parseInt(limit as string);
+    const skip = (pageNum - 1) * limitNum;
+
+    // Build where clause
+    const where: any = {};
+
+    // Search filter
+    if (search) {
+      where.OR = [
+        { name: { contains: search as string, mode: 'insensitive' } },
+        { email: { contains: search as string, mode: 'insensitive' } }
+      ];
+    }
+
+    // Role filter
+    if (role !== 'all') {
+      where.role = role;
+    }
+
+    // Status filter
+    if (status === 'active') {
+      where.isActive = true;
+    } else if (status === 'inactive') {
+      where.isActive = false;
+    }
+
+    // Get total count
+    const total = await prisma.user.count({ where });
+
+    // Get users
+    const users = await prisma.user.findMany({
+      where,
+      skip,
+      take: limitNum,
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        points: true,
+        level: true,
+        isActive: true,
+        orcidId: true,
+        createdAt: true,
+        lastLoginAt: true
+      }
+    });
+
+    res.json({
+      success: true,
+      users,
+      total,
+      page: pageNum,
+      pages: Math.ceil(total / limitNum),
+      limit: limitNum
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/admin/users/:id/stats - Get detailed user statistics
+router.get('/users/:id/stats', async (req: AuthRequest, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        points: true,
+        level: true,
+        orcidId: true,
+        isActive: true,
+        createdAt: true,
+        lastLoginAt: true,
+        approvedCount: true
+      }
+    });
+
+    if (!user) {
+      throw new AppError('Usuário não encontrado', 404);
+    }
+
+    // Get contribution stats
+    const [
+      translations,
+      approved,
+      reviews,
+      referrals
+    ] = await Promise.all([
+      prisma.translation.count({ where: { userId: id } }),
+      prisma.translation.count({ where: { userId: id, status: 'APPROVED' } }),
+      prisma.validation.count({ where: { userId: id } }),
+      // Will work after migration: prisma.referral.count({ where: { referrerId: id, status: 'ACCEPTED' } })
+      0 // Temporary placeholder
+    ]);
+
+    const approvalRate = translations > 0 ? Math.round((approved / translations) * 100) : 0;
+
+    res.json({
+      success: true,
+      user,
+      stats: {
+        contributions: {
+          translations,
+          approved,
+          reviews,
+          referrals,
+          approvalRate
+        }
+      }
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/admin/users/:id/history - Get user activity history
+router.get('/users/:id/history', async (req: AuthRequest, res, next) => {
+  try {
+    const { id } = req.params;
+    const { limit = '20' } = req.query;
+
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) {
+      throw new AppError('Usuário não encontrado', 404);
+    }
+
+    // Get user activities
+    const activities = await prisma.userActivity.findMany({
+      where: { userId: id },
+      orderBy: { createdAt: 'desc' },
+      take: parseInt(limit as string),
+      select: {
+        id: true,
+        type: true,
+        metadata: true,
+        createdAt: true
+      }
+    });
+
+    res.json({
+      success: true,
+      activities,
+      total: activities.length
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PUT /api/admin/users/:id/role - Change user role
+router.put('/users/:id/role', requireRole('ADMIN' as any), async (req: AuthRequest, res, next) => {
+  try {
+    const { id } = req.params;
+    const { role } = req.body;
+
+    // Validate role
+    const validRoles = ['TRANSLATOR', 'REVIEWER', 'MODERATOR', 'ADMIN'];
+    if (!validRoles.includes(role)) {
+      throw new AppError('Cargo inválido', 400);
+    }
+
+    // Prevent self-demotion
+    if (id === req.user!.id && role !== req.user!.role) {
+      throw new AppError('Você não pode alterar seu próprio cargo', 403);
+    }
+
+    // Update user role
+    const user = await prisma.user.update({
+      where: { id },
+      data: { role },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true
+      }
+    });
+
+    // Log action
+    await prisma.adminAuditLog.create({
+      data: {
+        adminId: req.user!.id,
+        action: 'CHANGE_USER_ROLE',
+        targetId: id,
+        metadata: {
+          oldRole: req.user!.role,
+          newRole: role,
+          timestamp: new Date().toISOString()
+        }
+      }
+    });
+
+    // Create notification for user
+    await prisma.notification.create({
+      data: {
+        userId: id,
+        type: 'SYSTEM',
+        title: 'Cargo Alterado',
+        message: `Seu cargo foi alterado para ${role}`,
+        metadata: { newRole: role }
+      }
+    });
+
+    res.json({
+      success: true,
+      message: `Cargo alterado para ${role}`,
+      user
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PUT /api/admin/users/:id/status - Activate/Deactivate user
+router.put('/users/:id/status', requireRole('MODERATOR' as any), async (req: AuthRequest, res, next) => {
+  try {
+    const { id } = req.params;
+    const { isActive, reason } = req.body;
+
+    if (typeof isActive !== 'boolean') {
+      throw new AppError('isActive deve ser um booleano', 400);
+    }
+
+    // Prevent self-deactivation
+    if (id === req.user!.id && !isActive) {
+      throw new AppError('Você não pode desativar sua própria conta', 403);
+    }
+
+    // Update user status
+    const user = await prisma.user.update({
+      where: { id },
+      data: { isActive },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        isActive: true
+      }
+    });
+
+    // Log action
+    await prisma.adminAuditLog.create({
+      data: {
+        adminId: req.user!.id,
+        action: isActive ? 'ACTIVATE_USER' : 'DEACTIVATE_USER',
+        targetId: id,
+        metadata: {
+          reason: reason || 'No reason provided',
+          timestamp: new Date().toISOString()
+        }
+      }
+    });
+
+    // Create notification for user
+    await prisma.notification.create({
+      data: {
+        userId: id,
+        type: 'SYSTEM',
+        title: isActive ? 'Conta Ativada' : 'Conta Desativada',
+        message: isActive 
+          ? 'Sua conta foi reativada' 
+          : `Sua conta foi desativada${reason ? `: ${reason}` : ''}`,
+        metadata: { isActive, reason }
+      }
+    });
+
+    res.json({
+      success: true,
+      message: `Usuário ${isActive ? 'ativado' : 'desativado'}`,
+      user
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/admin/users/bulk-action - Bulk action on multiple users
+router.post('/users/bulk-action', requireRole('MODERATOR' as any), async (req: AuthRequest, res, next) => {
+  try {
+    const { userIds, action } = req.body;
+
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      throw new AppError('userIds deve ser um array não vazio', 400);
+    }
+
+    if (!['activate', 'deactivate'].includes(action)) {
+      throw new AppError('Ação inválida', 400);
+    }
+
+    // Prevent self-action
+    if (userIds.includes(req.user!.id)) {
+      throw new AppError('Você não pode incluir sua própria conta em ações em massa', 403);
+    }
+
+    const isActive = action === 'activate';
+
+    // Update users
+    const result = await prisma.user.updateMany({
+      where: { id: { in: userIds } },
+      data: { isActive }
+    });
+
+    // Log action
+    await prisma.adminAuditLog.create({
+      data: {
+        adminId: req.user!.id,
+        action: `BULK_${isActive ? 'ACTIVATE' : 'DEACTIVATE'}`,
+        targetId: 'multiple',
+        metadata: {
+          userIds,
+          count: result.count,
+          timestamp: new Date().toISOString()
+        }
+      }
+    });
+
+    // Create notifications for affected users
+    await prisma.notification.createMany({
+      data: userIds.map(userId => ({
+        userId,
+        type: 'SYSTEM',
+        title: isActive ? 'Conta Ativada' : 'Conta Desativada',
+        message: `Sua conta foi ${isActive ? 'ativada' : 'desativada'} por um administrador`,
+        metadata: { bulkAction: true }
+      }))
+    });
+
+    res.json({
+      success: true,
+      message: `${result.count} usuário(s) ${isActive ? 'ativado(s)' : 'desativado(s)'}`,
+      affected: result.count
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/admin/users/export - Export users to CSV
+router.get('/users/export', async (req: AuthRequest, res, next) => {
+  try {
+    const { role = 'all', status = 'all' } = req.query;
+
+    // Build where clause
+    const where: any = {};
+
+    if (role !== 'all') {
+      where.role = role;
+    }
+
+    if (status === 'active') {
+      where.isActive = true;
+    } else if (status === 'inactive') {
+      where.isActive = false;
+    }
+
+    // Get all users matching filters
+    const users = await prisma.user.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        points: true,
+        level: true,
+        isActive: true,
+        orcidId: true,
+        institution: true,
+        country: true,
+        createdAt: true,
+        lastLoginAt: true
+      }
+    });
+
+    // Generate CSV
+    const headers = [
+      'ID',
+      'Nome',
+      'Email',
+      'Cargo',
+      'Pontos',
+      'Nível',
+      'Status',
+      'ORCID',
+      'Instituição',
+      'País',
+      'Data Cadastro',
+      'Último Login'
+    ];
+
+    const rows = users.map(user => [
+      user.id,
+      user.name,
+      user.email,
+      user.role,
+      user.points?.toString() || '0',
+      user.level?.toString() || '1',
+      user.isActive ? 'Ativo' : 'Inativo',
+      user.orcidId || '',
+      user.institution || '',
+      user.country || '',
+      new Date(user.createdAt).toLocaleDateString('pt-BR'),
+      user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleDateString('pt-BR') : 'Nunca'
+    ]);
+
+    const csv = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    // Log export
+    await prisma.adminAuditLog.create({
+      data: {
+        adminId: req.user!.id,
+        action: 'EXPORT_USERS',
+        targetId: 'csv',
+        metadata: {
+          totalUsers: users.length,
+          filters: { role, status },
+          timestamp: new Date().toISOString()
+        }
+      }
+    });
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename=usuarios-hpo-${new Date().toISOString().split('T')[0]}.csv`);
+    res.send('\uFEFF' + csv); // BOM for UTF-8 Excel compatibility
+
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;
 
