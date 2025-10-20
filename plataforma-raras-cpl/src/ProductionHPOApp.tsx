@@ -6118,321 +6118,461 @@ function ProductionHPOApp() {
   };
 
   // ============================================
-  // HEADER
+  // HEADER (REORGANIZADO - Dropdown "Mais")
   // ============================================
-  const Header = () => (
-    <header 
-      role="banner"
-      style={{
-        backgroundColor: '#1e40af',
-        color: 'white',
-        padding: '15px 20px',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-      }}
-    >
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        maxWidth: '1200px',
-        margin: '0 auto'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-          <div style={{ fontSize: '1.5rem' }} role="img" aria-label="Ícone Rede">🔗</div>
-          <div>
-            <div style={{ fontWeight: '600', fontSize: '18px' }}>
-              <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '600' }}>
-                PORTI-HPO <span role="img" aria-label={apiConnected ? 'Conectado' : 'Desconectado'}>{apiConnected ? '🟢' : '🔴'}</span>
-              </h1>
-            </div>
-            <div style={{ fontSize: '12px', opacity: 0.8 }}>
-              Por ti, pela ciência, em português
+  const Header = () => {
+    const [showMoreMenu, setShowMoreMenu] = useState(false);
+    
+    return (
+      <header 
+        role="banner"
+        style={{
+          backgroundColor: '#1e40af',
+          color: 'white',
+          padding: '15px 20px',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+          position: 'relative'
+        }}
+      >
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          maxWidth: '1400px',
+          margin: '0 auto'
+        }}>
+          {/* Logo */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+            <div style={{ fontSize: '1.5rem' }} role="img" aria-label="Ícone Rede">🔗</div>
+            <div>
+              <div style={{ fontWeight: '600', fontSize: '18px' }}>
+                <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '600' }}>
+                  PORTI-HPO <span role="img" aria-label={apiConnected ? 'Conectado' : 'Desconectado'}>{apiConnected ? '🟢' : '🔴'}</span>
+                </h1>
+              </div>
+              <div style={{ fontSize: '12px', opacity: 0.8 }}>
+                Por ti, pela ciência, em português
+              </div>
             </div>
           </div>
-        </div>
 
-        <nav role="navigation" aria-label="Menu principal" style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-          <button
-            data-page="dashboard"
-            onClick={() => setCurrentPage('dashboard')}
-            aria-label="Ir para Dashboard"
-            aria-current={currentPage === 'dashboard' ? 'page' : undefined}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: currentPage === 'dashboard' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '14px'
-            }}
-          >
-            <span role="img" aria-hidden="true">🏠</span> Dashboard
-          </button>
-          
-          <button
-            data-page="translate"
-            onClick={() => setCurrentPage('translate')}
-            aria-label="Ir para página de Traduzir termos"
-            aria-current={currentPage === 'translate' ? 'page' : undefined}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: currentPage === 'translate' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '14px'
-            }}
-          >
-            <span role="img" aria-hidden="true">📝</span> Traduzir
-          </button>
-
-          <button
-            data-page="review"
-            onClick={() => setCurrentPage('review')}
-            aria-label="Ir para página de Revisar traduções"
-            aria-current={currentPage === 'review' ? 'page' : undefined}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: currentPage === 'review' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '14px'
-            }}
-          >
-            <span role="img" aria-hidden="true">✅</span> Revisar
-          </button>
-
-          <button
-            data-page="leaderboard"
-            onClick={() => {
-              loadLeaderboard('all');
-              setCurrentPage('leaderboard');
-            }}
-            aria-label="Ir para Ranking de colaboradores"
-            aria-current={currentPage === 'leaderboard' ? 'page' : undefined}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: currentPage === 'leaderboard' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '14px'
-            }}
-          >
-            <span role="img" aria-hidden="true">🏆</span> Ranking
-          </button>
-
-          <button
-            data-page="history"
-            onClick={() => {
-              loadHistory(undefined, 1);
-              setCurrentPage('history');
-            }}
-            aria-label="Ir para Histórico de traduções"
-            aria-current={currentPage === 'history' ? 'page' : undefined}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: currentPage === 'history' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '14px'
-            }}
-          >
-            <span role="img" aria-hidden="true">📚</span> Histórico
-          </button>
-
-          {/* Guidelines Button */}
-          <button
-            onClick={() => setCurrentPage('guidelines')}
-            aria-label="Ir para Diretrizes de tradução"
-            aria-current={currentPage === 'guidelines' ? 'page' : undefined}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: currentPage === 'guidelines' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '14px'
-            }}
-          >
-            📖 Diretrizes
-          </button>
-
-          {/* Points/Gamification Button */}
-          <button
-            onClick={() => setCurrentPage('points')}
-            aria-label="Ir para Sistema de Pontuação"
-            aria-current={currentPage === 'points' ? 'page' : undefined}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: currentPage === 'points' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '14px'
-            }}
-          >
-            🏆 Pontos
-          </button>
-
-          {/* Profile Button */}
-          <button
-            onClick={() => setCurrentPage('profile')}
-            aria-label="Ir para Perfil do usuário"
-            aria-current={currentPage === 'profile' ? 'page' : undefined}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: currentPage === 'profile' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '14px'
-            }}
-          >
-            <span role="img" aria-hidden="true">👤</span> Perfil
-          </button>
-
-          {/* Admin Dashboard - Only for MODERATOR and above */}
-          {user && RoleHelpers.canAccessAdminDashboard(user.role) && (
+          <nav role="navigation" aria-label="Menu principal" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {/* Main Navigation - Core Actions */}
             <button
-              onClick={() => setCurrentPage('admin')}
-              aria-label="Ir para Dashboard Administrativo"
-              aria-current={currentPage === 'admin' ? 'page' : undefined}
+              data-page="dashboard"
+              onClick={() => setCurrentPage('dashboard')}
+              aria-label="Ir para Dashboard"
+              aria-current={currentPage === 'dashboard' ? 'page' : undefined}
               style={{
                 padding: '8px 16px',
-                backgroundColor: currentPage === 'admin' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
+                backgroundColor: currentPage === 'dashboard' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
                 color: 'white',
                 border: 'none',
                 borderRadius: '6px',
                 cursor: 'pointer',
                 fontSize: '14px',
-                fontWeight: '600'
+                transition: 'background-color 0.2s'
               }}
             >
-              <span role="img" aria-hidden="true">👑</span> Admin
+              <span role="img" aria-hidden="true">🏠</span> Dashboard
             </button>
-          )}
+            
+            <button
+              data-page="translate"
+              onClick={() => setCurrentPage('translate')}
+              aria-label="Ir para página de Traduzir termos"
+              aria-current={currentPage === 'translate' ? 'page' : undefined}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: currentPage === 'translate' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                transition: 'background-color 0.2s'
+              }}
+            >
+              <span role="img" aria-hidden="true">📝</span> Traduzir
+            </button>
 
-          {/* Notification Bell */}
-          <button
-            onClick={() => {
-              if (!showNotifications) {
-                loadNotifications(1);
-              }
-              setShowNotifications(!showNotifications);
-            }}
-            aria-label={`Notificações ${unreadCount > 0 ? `- ${unreadCount} não lidas` : ''}`}
-            aria-expanded={showNotifications}
-            style={{
-              position: 'relative',
-              padding: '8px',
-              backgroundColor: 'rgba(255,255,255,0.1)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '18px'
-            }}
-            title="Notificações"
-          >
-            <span role="img" aria-hidden="true">🔔</span>
-            {unreadCount > 0 && (
-              <span 
+            <button
+              data-page="review"
+              onClick={() => setCurrentPage('review')}
+              aria-label="Ir para página de Revisar traduções"
+              aria-current={currentPage === 'review' ? 'page' : undefined}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: currentPage === 'review' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                transition: 'background-color 0.2s'
+              }}
+            >
+              <span role="img" aria-hidden="true">✅</span> Revisar
+            </button>
+
+            <button
+              data-page="leaderboard"
+              onClick={() => {
+                loadLeaderboard('all');
+                setCurrentPage('leaderboard');
+              }}
+              aria-label="Ir para Ranking de colaboradores"
+              aria-current={currentPage === 'leaderboard' ? 'page' : undefined}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: currentPage === 'leaderboard' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                transition: 'background-color 0.2s'
+              }}
+            >
+              <span role="img" aria-hidden="true">🏆</span> Ranking
+            </button>
+
+            {/* Dropdown "Mais" - Secondary Navigation */}
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={() => setShowMoreMenu(!showMoreMenu)}
+                aria-label="Menu adicional"
+                aria-expanded={showMoreMenu}
                 style={{
-                  position: 'absolute',
-                  top: '-4px',
-                  right: '-4px',
-                  backgroundColor: '#ef4444',
+                  padding: '8px 16px',
+                  backgroundColor: showMoreMenu ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
                   color: 'white',
-                  borderRadius: '10px',
-                  padding: '2px 6px',
-                  fontSize: '10px',
-                  fontWeight: '600',
-                  minWidth: '18px',
-                  textAlign: 'center'
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  transition: 'background-color 0.2s'
                 }}
-                aria-label={`${unreadCount > 99 ? 'Mais de 99' : unreadCount} notificações não lidas`}
               >
-                {unreadCount > 99 ? '99+' : unreadCount}
-              </span>
+                <span role="img" aria-hidden="true">⋯</span> Mais
+              </button>
+
+              {/* Dropdown Menu */}
+              {showMoreMenu && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '100%',
+                    right: '0',
+                    marginTop: '8px',
+                    backgroundColor: 'white',
+                    borderRadius: '8px',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                    minWidth: '200px',
+                    overflow: 'hidden',
+                    zIndex: 1000,
+                    border: '1px solid #e5e7eb'
+                  }}
+                  onMouseLeave={() => setShowMoreMenu(false)}
+                >
+                  <button
+                    onClick={() => {
+                      loadHistory(undefined, 1);
+                      setCurrentPage('history');
+                      setShowMoreMenu(false);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      backgroundColor: currentPage === 'history' ? '#eff6ff' : 'white',
+                      color: currentPage === 'history' ? '#1e40af' : '#1f2937',
+                      border: 'none',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      transition: 'background-color 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (currentPage !== 'history') {
+                        e.currentTarget.style.backgroundColor = '#f9fafb';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (currentPage !== 'history') {
+                        e.currentTarget.style.backgroundColor = 'white';
+                      }
+                    }}
+                  >
+                    <span role="img" aria-hidden="true">📚</span> Histórico
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setCurrentPage('guidelines');
+                      setShowMoreMenu(false);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      backgroundColor: currentPage === 'guidelines' ? '#eff6ff' : 'white',
+                      color: currentPage === 'guidelines' ? '#1e40af' : '#1f2937',
+                      border: 'none',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      transition: 'background-color 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (currentPage !== 'guidelines') {
+                        e.currentTarget.style.backgroundColor = '#f9fafb';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (currentPage !== 'guidelines') {
+                        e.currentTarget.style.backgroundColor = 'white';
+                      }
+                    }}
+                  >
+                    <span role="img" aria-hidden="true">📖</span> Diretrizes
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setCurrentPage('points');
+                      setShowMoreMenu(false);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      backgroundColor: currentPage === 'points' ? '#eff6ff' : 'white',
+                      color: currentPage === 'points' ? '#1e40af' : '#1f2937',
+                      border: 'none',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      transition: 'background-color 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (currentPage !== 'points') {
+                        e.currentTarget.style.backgroundColor = '#f9fafb';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (currentPage !== 'points') {
+                        e.currentTarget.style.backgroundColor = 'white';
+                      }
+                    }}
+                  >
+                    <span role="img" aria-hidden="true">🎯</span> Pontos
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setCurrentPage('referral');
+                      setShowMoreMenu(false);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      backgroundColor: currentPage === 'referral' ? '#eff6ff' : 'white',
+                      color: currentPage === 'referral' ? '#1e40af' : '#1f2937',
+                      border: 'none',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      transition: 'background-color 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (currentPage !== 'referral') {
+                        e.currentTarget.style.backgroundColor = '#f9fafb';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (currentPage !== 'referral') {
+                        e.currentTarget.style.backgroundColor = 'white';
+                      }
+                    }}
+                  >
+                    <span role="img" aria-hidden="true">💌</span> Convidar Amigos
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Divider */}
+            <div style={{ width: '1px', height: '30px', backgroundColor: 'rgba(255,255,255,0.3)', margin: '0 4px' }} />
+
+            {/* Profile & Admin */}
+            <button
+              onClick={() => setCurrentPage('profile')}
+              aria-label="Ir para Perfil do usuário"
+              aria-current={currentPage === 'profile' ? 'page' : undefined}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: currentPage === 'profile' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                transition: 'background-color 0.2s'
+              }}
+            >
+              <span role="img" aria-hidden="true">👤</span> Perfil
+            </button>
+
+            {/* Admin Dashboard - Only for MODERATOR and above */}
+            {user && RoleHelpers.canAccessAdminDashboard(user.role) && (
+              <button
+                onClick={() => setCurrentPage('admin')}
+                aria-label="Ir para Dashboard Administrativo"
+                aria-current={currentPage === 'admin' ? 'page' : undefined}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: currentPage === 'admin' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  transition: 'background-color 0.2s'
+                }}
+              >
+                <span role="img" aria-hidden="true">👑</span> Admin
+              </button>
             )}
-          </button>
 
-          <div style={{ textAlign: 'right' }} role="status" aria-label="Informações do usuário">
-            <div style={{ fontSize: '14px', fontWeight: '500' }}>
-              {user?.name}
-              {user?.orcidId && <span style={{ color: '#4ade80' }} aria-label="ORCID verificado"> ✓</span>}
-            </div>
-            <div style={{ fontSize: '12px', opacity: 0.8 }}>
-              {user?.points} pts • Nível {user?.level}
-            </div>
-          </div>
+            {/* Notification Bell */}
+            <button
+              onClick={() => {
+                if (!showNotifications) {
+                  loadNotifications(1);
+                }
+                setShowNotifications(!showNotifications);
+              }}
+              aria-label={`Notificações ${unreadCount > 0 ? `- ${unreadCount} não lidas` : ''}`}
+              aria-expanded={showNotifications}
+              style={{
+                position: 'relative',
+                padding: '8px',
+                backgroundColor: 'rgba(255,255,255,0.1)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '18px',
+                transition: 'background-color 0.2s'
+              }}
+              title="Notificações"
+            >
+              <span role="img" aria-hidden="true">🔔</span>
+              {unreadCount > 0 && (
+                <span 
+                  style={{
+                    position: 'absolute',
+                    top: '-4px',
+                    right: '-4px',
+                    backgroundColor: '#ef4444',
+                    color: 'white',
+                    borderRadius: '10px',
+                    padding: '2px 6px',
+                    fontSize: '10px',
+                    fontWeight: '600',
+                    minWidth: '18px',
+                    textAlign: 'center'
+                  }}
+                  aria-label={`${unreadCount > 99 ? 'Mais de 99' : unreadCount} notificações não lidas`}
+                >
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
+            </button>
 
-          {/* Accessibility Menu Button (Task #1) - Replaces individual Dark Mode button */}
-          <button
-            onClick={() => setShowAccessibilityMenu(!showAccessibilityMenu)}
-            aria-label="Abrir menu de acessibilidade"
-            aria-expanded={showAccessibilityMenu}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: showAccessibilityMenu ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.2)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '20px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              transition: 'all 0.3s ease'
-            }}
-            title="Acessibilidade (Tamanho Texto, Tema, Ajuda)"
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.3)'}
-            onMouseLeave={(e) => {
-              if (!showAccessibilityMenu) {
-                e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.2)';
-              }
-            }}
-          >
-            <span role="img" aria-hidden="true">♿</span>
-          </button>
-          
-          <button
-            onClick={() => {
-              TokenStorage.remove();
-              setUser(null);
-              setCurrentPage('login');
-              setSelectedTerm(null);
-              setTranslation('');
-              setTerms([]);
-            }}
-            aria-label="Sair da aplicação"
-            style={{
-              padding: '8px 16px',
-              backgroundColor: 'rgba(255,255,255,0.2)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '14px'
-            }}
-          >
-            <span role="img" aria-hidden="true">🚪</span> Sair
-          </button>
-        </nav>
-      </div>
-    </header>
-  );
+            {/* User Info */}
+            <div style={{ textAlign: 'right', marginLeft: '8px' }} role="status" aria-label="Informações do usuário">
+              <div style={{ fontSize: '14px', fontWeight: '500' }}>
+                {user?.name}
+                {user?.orcidId && <span style={{ color: '#4ade80' }} aria-label="ORCID verificado"> ✓</span>}
+              </div>
+              <div style={{ fontSize: '12px', opacity: 0.8 }}>
+                {user?.points} pts • Nível {user?.level}
+              </div>
+            </div>
+
+            {/* Accessibility Menu Button */}
+            <button
+              onClick={() => setShowAccessibilityMenu(!showAccessibilityMenu)}
+              aria-label="Abrir menu de acessibilidade"
+              aria-expanded={showAccessibilityMenu}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: showAccessibilityMenu ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.2)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '20px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                transition: 'all 0.3s ease'
+              }}
+              title="Acessibilidade (Tamanho Texto, Tema, Ajuda)"
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.3)'}
+              onMouseLeave={(e) => {
+                if (!showAccessibilityMenu) {
+                  e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.2)';
+                }
+              }}
+            >
+              <span role="img" aria-hidden="true">♿</span>
+            </button>
+            
+            {/* Logout */}
+            <button
+              onClick={() => {
+                TokenStorage.remove();
+                setUser(null);
+                setCurrentPage('login');
+                setSelectedTerm(null);
+                setTranslation('');
+                setTerms([]);
+              }}
+              aria-label="Sair da aplicação"
+              style={{
+                padding: '8px 16px',
+                backgroundColor: 'rgba(255,255,255,0.2)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                transition: 'background-color 0.2s'
+              }}
+            >
+              <span role="img" aria-hidden="true">🚪</span> Sair
+            </button>
+          </nav>
+        </div>
+      </header>
+    );
+  };
 
   // ============================================
   // NOTIFICATION CENTER COMPONENT
