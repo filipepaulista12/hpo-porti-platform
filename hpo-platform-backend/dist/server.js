@@ -12,6 +12,8 @@ const http_1 = __importDefault(require("http"));
 const logger_1 = require("./utils/logger");
 const errorHandler_1 = require("./middleware/errorHandler");
 const socket_1 = require("./websocket/socket");
+// Analytics middleware - TOTALMENTE DESABILITADO PARA DEBUG (2025-10-18)
+// import { analyticsMiddleware } from './middleware/analytics.middleware.safe';
 // Routes
 const auth_routes_1 = __importDefault(require("./routes/auth.routes"));
 const user_routes_1 = __importDefault(require("./routes/user.routes"));
@@ -26,7 +28,8 @@ const notification_routes_1 = __importDefault(require("./routes/notification.rou
 const invite_routes_1 = __importDefault(require("./routes/invite.routes"));
 const comment_routes_1 = __importDefault(require("./routes/comment.routes"));
 const conflict_routes_1 = __importDefault(require("./routes/conflict.routes"));
-// NOTE: analytics routes not implemented yet - pending for future sprint
+const analytics_routes_1 = __importDefault(require("./routes/analytics.routes"));
+const test_routes_1 = __importDefault(require("./routes/test.routes"));
 // Load environment variables
 dotenv_1.default.config();
 const app = (0, express_1.default)();
@@ -69,6 +72,8 @@ app.use((req, _res, next) => {
     });
     next();
 });
+// Analytics middleware - DESABILITADO PARA DEBUG (2025-10-18)
+// app.use(analyticsMiddleware);
 // ============================================
 // ROUTES
 // ============================================
@@ -96,7 +101,8 @@ app.use('/api/notifications', notification_routes_1.default);
 app.use('/api/invite', invite_routes_1.default);
 app.use('/api/comments', comment_routes_1.default);
 app.use('/api/conflicts', conflict_routes_1.default);
-// NOTE: analytics routes not implemented yet - pending for future sprint
+app.use('/api/analytics', analytics_routes_1.default);
+app.use('/api/test', test_routes_1.default);
 // 404 handler
 app.use((req, res) => {
     res.status(404).json({
@@ -111,15 +117,15 @@ app.use(errorHandler_1.errorHandler);
 // ============================================
 const startServer = async () => {
     try {
-        // Add error handlers BEFORE starting server
-        process.on('uncaughtException', (error) => {
-            logger_1.logger.error('Uncaught Exception:', error);
-            process.exit(1);
-        });
-        process.on('unhandledRejection', (reason, promise) => {
-            logger_1.logger.error('Unhandled Rejection at:', { promise, reason });
-            process.exit(1);
-        });
+        // TEMPORARIAMENTE DESABILITADO: Handlers de erro estavam matando servidor por Prisma warnings
+        // process.on('uncaughtException', (error) => {
+        //   logger.error('Uncaught Exception:', error);
+        //   process.exit(1);
+        // });
+        // process.on('unhandledRejection', (reason, promise) => {
+        //   logger.error('Unhandled Rejection at:', { promise, reason });
+        //   process.exit(1);
+        // });
         // Create HTTP server (needed for WebSocket)
         const httpServer = http_1.default.createServer(app);
         // Initialize WebSocket
@@ -132,6 +138,10 @@ const startServer = async () => {
             logger_1.logger.info(`🌐 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:5173'}`);
             logger_1.logger.info(`🔌 WebSocket: ws://localhost:${PORT}/socket.io/`);
             logger_1.logger.info(`✅ Server started successfully!`);
+            // DEBUG: Confirmar que está realmente escutando
+            setTimeout(() => {
+                logger_1.logger.info(`🔍 DEBUG: Server still alive after 3 seconds`);
+            }, 3000);
         });
         // Handle server errors
         httpServer.on('error', (error) => {

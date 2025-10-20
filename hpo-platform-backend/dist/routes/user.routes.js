@@ -8,6 +8,51 @@ const database_1 = __importDefault(require("../config/database"));
 const auth_1 = require("../middleware/auth");
 const promotion_service_1 = require("../services/promotion.service");
 const router = (0, express_1.Router)();
+// GET /api/users/profile/complete - MUST BE BEFORE /profile/:id TO AVOID MATCHING :id
+router.get('/profile/complete', auth_1.authenticate, async (req, res, next) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ error: 'Not authenticated' });
+        }
+        const user = await database_1.default.user.findUnique({
+            where: { id: userId },
+            select: {
+                id: true,
+                email: true,
+                name: true,
+                institution: true,
+                specialty: true,
+                country: true,
+                bio: true,
+                avatarUrl: true,
+                orcidId: true,
+                profileJson: true,
+                points: true,
+                level: true,
+                streak: true,
+                role: true,
+                hasCompletedOnboarding: true,
+                createdAt: true
+            }
+        });
+        console.log('📋 user.routes - Found user:', user ? 'YES' : 'NO');
+        console.log('📋 user.routes - User data:', user ? `${user.email} (${user.id})` : 'null');
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        res.json({
+            success: true,
+            user: {
+                ...user,
+                professionalProfile: user.profileJson || {}
+            }
+        });
+    }
+    catch (error) {
+        next(error);
+    }
+});
 // GET /api/users/profile/:id
 router.get('/profile/:id', auth_1.authenticate, async (req, res, next) => {
     try {
@@ -290,6 +335,110 @@ router.post('/complete-onboarding', auth_1.authenticate, async (req, res, next) 
             success: true,
             message: 'Onboarding completed successfully',
             user
+        });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+// PUT /api/users/profile/professional - Update professional profile
+router.put('/profile/professional', auth_1.authenticate, async (req, res, next) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ error: 'Not authenticated' });
+        }
+        const { academicDegree, fieldOfStudy, professionalRole, yearsOfExperience, institution, medicalSpecialty, researchArea, englishProficiency, ehealsScore, ehealsAnswers } = req.body;
+        // Validate academicDegree if provided
+        const validDegrees = ['high_school', 'bachelor', 'master', 'phd', 'postdoc', 'other'];
+        if (academicDegree && !validDegrees.includes(academicDegree)) {
+            return res.status(400).json({
+                error: 'Invalid academic degree. Must be one of: ' + validDegrees.join(', ')
+            });
+        }
+        // Validate professionalRole if provided
+        const validRoles = ['researcher', 'clinician', 'student', 'professor', 'translator', 'other'];
+        if (professionalRole && !validRoles.includes(professionalRole)) {
+            return res.status(400).json({
+                error: 'Invalid professional role. Must be one of: ' + validRoles.join(', ')
+            });
+        }
+        // Validate englishProficiency if provided
+        const validProficiency = ['basic', 'intermediate', 'advanced', 'fluent', 'native'];
+        if (englishProficiency && !validProficiency.includes(englishProficiency)) {
+            return res.status(400).json({
+                error: 'Invalid English proficiency. Must be one of: ' + validProficiency.join(', ')
+            });
+        }
+        // Validate ehealsScore if provided
+        if (ehealsScore !== undefined && (ehealsScore < 8 || ehealsScore > 40)) {
+            return res.status(400).json({
+                error: 'Invalid eHEALS score. Must be between 8 and 40.'
+            });
+        }
+        // Validate ehealsAnswers if provided
+        if (ehealsAnswers) {
+            if (!Array.isArray(ehealsAnswers) || ehealsAnswers.length !== 8) {
+                return res.status(400).json({
+                    error: 'eHEALS answers must be an array of 8 numbers.'
+                });
+            }
+            if (ehealsAnswers.some((ans) => ans < 1 || ans > 5)) {
+                return res.status(400).json({
+                    error: 'Each eHEALS answer must be between 1 and 5.'
+                });
+            }
+        }
+        // Build profile object (only include non-undefined fields)
+        const profileData = {};
+        if (academicDegree !== undefined)
+            profileData.academicDegree = academicDegree;
+        if (fieldOfStudy !== undefined)
+            profileData.fieldOfStudy = fieldOfStudy;
+        if (professionalRole !== undefined)
+            profileData.professionalRole = professionalRole;
+        if (yearsOfExperience !== undefined)
+            profileData.yearsOfExperience = yearsOfExperience;
+        if (institution !== undefined)
+            profileData.institution = institution;
+        if (medicalSpecialty !== undefined)
+            profileData.medicalSpecialty = medicalSpecialty;
+        if (researchArea !== undefined)
+            profileData.researchArea = researchArea;
+        if (englishProficiency !== undefined)
+            profileData.englishProficiency = englishProficiency;
+        if (ehealsScore !== undefined)
+            profileData.ehealsScore = ehealsScore;
+        if (ehealsAnswers !== undefined)
+            profileData.ehealsAnswers = ehealsAnswers;
+        // Get current profile to merge with new data
+        const currentUser = await database_1.default.user.findUnique({
+            where: { id: userId },
+            select: { profileJson: true }
+        });
+        // Merge existing profile with new data
+        const mergedProfile = {
+            ...(currentUser?.profileJson || {}),
+            ...profileData
+        };
+        // Update user profile
+        const updatedUser = await database_1.default.user.update({
+            where: { id: userId },
+            data: {
+                profileJson: mergedProfile
+            },
+            select: {
+                id: true,
+                email: true,
+                name: true,
+                orcidId: true,
+                profileJson: true
+            }
+        });
+        res.json({
+            success: true,
+            message: 'Professional profile updated successfully',
+            user: updatedUser
         });
     }
     catch (error) {

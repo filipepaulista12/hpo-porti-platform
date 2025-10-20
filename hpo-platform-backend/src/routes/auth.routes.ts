@@ -161,6 +161,58 @@ router.post('/login', async (req, res, next) => {
 });
 
 // ============================================
+// OAuth Configuration Endpoint
+// ============================================
+
+/**
+ * GET /api/auth/config
+ * Returns OAuth configuration for frontend
+ */
+router.get('/config', (req, res) => {
+  const config: any = {
+    providers: []
+  };
+
+  // ORCID configuration
+  if (process.env.ORCID_CLIENT_ID) {
+    const useProduction = process.env.ORCID_USE_PRODUCTION !== 'false';
+    const orcidBaseUrl = useProduction ? 'https://orcid.org' : 'https://sandbox.orcid.org';
+    
+    config.providers.push({
+      name: 'orcid',
+      enabled: true,
+      authUrl: `${orcidBaseUrl}/oauth/authorize`,
+      clientId: process.env.ORCID_CLIENT_ID,
+      redirectUri: process.env.ORCID_REDIRECT_URI || 'http://localhost:3001/api/auth/orcid/callback'
+    });
+  }
+
+  // LinkedIn configuration
+  if (process.env.LINKEDIN_CLIENT_ID) {
+    config.providers.push({
+      name: 'linkedin',
+      enabled: true,
+      authUrl: 'https://www.linkedin.com/oauth/v2/authorization',
+      clientId: process.env.LINKEDIN_CLIENT_ID,
+      redirectUri: process.env.LINKEDIN_REDIRECT_URI || 'http://localhost:3001/api/auth/linkedin/callback'
+    });
+  }
+
+  // Google configuration (if needed in future)
+  if (process.env.GOOGLE_CLIENT_ID) {
+    config.providers.push({
+      name: 'google',
+      enabled: true,
+      authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      redirectUri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback'
+    });
+  }
+
+  res.json(config);
+});
+
+// ============================================
 // ORCID OAuth Integration
 // ============================================
 

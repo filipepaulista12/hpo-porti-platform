@@ -7,6 +7,8 @@ const express_1 = require("express");
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const zod_1 = require("zod");
+const axios_1 = __importDefault(require("axios"));
+const crypto_1 = __importDefault(require("crypto"));
 const database_1 = __importDefault(require("../config/database"));
 const errorHandler_1 = require("../middleware/errorHandler");
 const auth_1 = require("../middleware/auth");
@@ -138,6 +140,51 @@ router.post('/login', async (req, res, next) => {
     catch (error) {
         next(error);
     }
+});
+// ============================================
+// OAuth Configuration Endpoint
+// ============================================
+/**
+ * GET /api/auth/config
+ * Returns OAuth configuration for frontend
+ */
+router.get('/config', (req, res) => {
+    const config = {
+        providers: []
+    };
+    // ORCID configuration
+    if (process.env.ORCID_CLIENT_ID) {
+        const useProduction = process.env.ORCID_USE_PRODUCTION !== 'false';
+        const orcidBaseUrl = useProduction ? 'https://orcid.org' : 'https://sandbox.orcid.org';
+        config.providers.push({
+            name: 'orcid',
+            enabled: true,
+            authUrl: `${orcidBaseUrl}/oauth/authorize`,
+            clientId: process.env.ORCID_CLIENT_ID,
+            redirectUri: process.env.ORCID_REDIRECT_URI || 'http://localhost:3001/api/auth/orcid/callback'
+        });
+    }
+    // LinkedIn configuration
+    if (process.env.LINKEDIN_CLIENT_ID) {
+        config.providers.push({
+            name: 'linkedin',
+            enabled: true,
+            authUrl: 'https://www.linkedin.com/oauth/v2/authorization',
+            clientId: process.env.LINKEDIN_CLIENT_ID,
+            redirectUri: process.env.LINKEDIN_REDIRECT_URI || 'http://localhost:3001/api/auth/linkedin/callback'
+        });
+    }
+    // Google configuration (if needed in future)
+    if (process.env.GOOGLE_CLIENT_ID) {
+        config.providers.push({
+            name: 'google',
+            enabled: true,
+            authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+            clientId: process.env.GOOGLE_CLIENT_ID,
+            redirectUri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback'
+        });
+    }
+    res.json(config);
 });
 // ============================================
 // ORCID OAuth Integration
@@ -340,6 +387,146 @@ router.get('/me', auth_1.authenticate, async (req, res, next) => {
         });
     }
     catch (error) {
+        next(error);
+    }
+});
+// ============================================================================
+// LINKEDIN OAUTH 2.0 INTEGRATION
+// ============================================================================
+/**
+ * GET /api/auth/linkedin
+ * Inicia o fluxo OAuth do LinkedIn
+ * Redireciona o usuário para a página de autorização do LinkedIn
+ */
+router.get('/linkedin', (req, res) => {
+    const clientId = process.env.LINKEDIN_CLIENT_ID;
+    const redirectUri = process.env.LINKEDIN_REDIRECT_URI || 'http://localhost:3001/api/auth/linkedin/callback';
+    if (!clientId) {
+        throw new errorHandler_1.AppError('LinkedIn OAuth not configured. Please set LINKEDIN_CLIENT_ID in .env', 500);
+    }
+    // Generate random state for CSRF protection
+    const state = crypto_1.default.randomBytes(16).toString('hex');
+    // Store state in session (or you can use Redis for production)
+    // For simplicity, we'll validate it in the callback using a simple approach
+    const scope = 'r_liteprofile r_emailaddress'; // Permissions needed
+    const authUrl = `https://www.linkedin.com/oauth/v2/authorization?` +
+        `response_type=code` +
+        `&client_id=${clientId}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&state=${state}` +
+        `&scope=${encodeURIComponent(scope)}`;
+    logger_1.logger.info('LinkedIn OAuth initiated', { state });
+    res.redirect(authUrl);
+});
+/**
+ * GET /api/auth/linkedin/callback
+ * Callback após autorização do LinkedIn
+ * Troca o code por access token e cria/atualiza o usuário
+ */
+router.get('/linkedin/callback', async (req, res, next) => {
+    try {
+        const { code, state, error, error_description } = req.query;
+        // Check for errors from LinkedIn
+        if (error) {
+            logger_1.logger.error('LinkedIn OAuth error', { error, error_description });
+            const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+            return res.redirect(`${frontendUrl}/login?error=${error}&message=${encodeURIComponent(error_description || 'LinkedIn authentication failed')}`);
+        }
+        if (!code) {
+            throw new errorHandler_1.AppError('Authorization code not received from LinkedIn', 400);
+        }
+        const clientId = process.env.LINKEDIN_CLIENT_ID;
+        const clientSecret = process.env.LINKEDIN_CLIENT_SECRET;
+        const redirectUri = process.env.LINKEDIN_REDIRECT_URI || 'http://localhost:3001/api/auth/linkedin/callback';
+        if (!clientId || !clientSecret) {
+            throw new errorHandler_1.AppError('LinkedIn OAuth not properly configured', 500);
+        }
+        // Exchange code for access token
+        logger_1.logger.info('Exchanging LinkedIn code for access token');
+        const tokenResponse = await axios_1.default.post('https://www.linkedin.com/oauth/v2/accessToken', null, {
+            params: {
+                grant_type: 'authorization_code',
+                code: code,
+                redirect_uri: redirectUri,
+                client_id: clientId,
+                client_secret: clientSecret
+            },
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+        });
+        const accessToken = tokenResponse.data.access_token;
+        if (!accessToken) {
+            throw new errorHandler_1.AppError('Failed to obtain access token from LinkedIn', 500);
+        }
+        // Fetch user profile from LinkedIn
+        logger_1.logger.info('Fetching LinkedIn profile');
+        const [profileResponse, emailResponse] = await Promise.all([
+            axios_1.default.get('https://api.linkedin.com/v2/me', {
+                headers: { Authorization: `Bearer ${accessToken}` }
+            }),
+            axios_1.default.get('https://api.linkedin.com/v2/emailAddress?q=members&projection=(elements*(handle~))', {
+                headers: { Authorization: `Bearer ${accessToken}` }
+            })
+        ]);
+        const profile = profileResponse.data;
+        const emailData = emailResponse.data;
+        // Extract email
+        const email = emailData.elements?.[0]?.['handle~']?.emailAddress;
+        if (!email) {
+            throw new errorHandler_1.AppError('Could not retrieve email from LinkedIn', 400);
+        }
+        // Extract profile data
+        const firstName = profile.localizedFirstName || '';
+        const lastName = profile.localizedLastName || '';
+        const linkedinId = profile.id;
+        logger_1.logger.info('LinkedIn profile retrieved', { email, linkedinId });
+        // Check if user exists
+        let user = await database_1.default.user.findUnique({
+            where: { email }
+        });
+        if (user) {
+            // User exists - update LinkedIn ID if not set
+            if (!user.orcidId || !user.orcidId.startsWith('linkedin:')) {
+                user = await database_1.default.user.update({
+                    where: { id: user.id },
+                    data: {
+                        orcidId: `linkedin:${linkedinId}`,
+                        lastLoginAt: new Date()
+                    }
+                });
+            }
+            else {
+                // Just update last login
+                user = await database_1.default.user.update({
+                    where: { id: user.id },
+                    data: { lastLoginAt: new Date() }
+                });
+            }
+            logger_1.logger.info('Existing user logged in via LinkedIn', { userId: user.id, email });
+        }
+        else {
+            // Create new user
+            user = await database_1.default.user.create({
+                data: {
+                    email,
+                    name: `${firstName} ${lastName}`.trim() || 'LinkedIn User',
+                    orcidId: `linkedin:${linkedinId}`,
+                    role: 'TRANSLATOR',
+                    password: null, // OAuth users don't have password
+                    lastLoginAt: new Date()
+                }
+            });
+            logger_1.logger.info('New user created via LinkedIn', { userId: user.id, email });
+        }
+        // Generate JWT token
+        const token = generateToken(user.id, user.email, user.role);
+        // Redirect to frontend with token
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        res.redirect(`${frontendUrl}/auth/callback?token=${token}&provider=linkedin`);
+    }
+    catch (error) {
+        logger_1.logger.error('LinkedIn OAuth callback error', { error });
         next(error);
     }
 });
