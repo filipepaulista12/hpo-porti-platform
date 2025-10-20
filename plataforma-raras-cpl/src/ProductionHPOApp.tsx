@@ -6118,6 +6118,1073 @@ function ProductionHPOApp() {
   };
 
   // ============================================
+  // ADMIN USER MANAGEMENT PAGE
+  // ============================================
+  const AdminUserManagementPage = () => {
+    const [users, setUsers] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [filterRole, setFilterRole] = useState<string>('all');
+    const [filterStatus, setFilterStatus] = useState<string>('all');
+    const [currentPage, setCurrentPage] = useState(1);
+    const [totalPages, setTotalPages] = useState(1);
+    const [totalUsers, setTotalUsers] = useState(0);
+    const [selectedUser, setSelectedUser] = useState<any>(null);
+    const [showUserModal, setShowUserModal] = useState(false);
+    const [showRoleModal, setShowRoleModal] = useState(false);
+    const [showStatusModal, setShowStatusModal] = useState(false);
+    const [newRole, setNewRole] = useState('');
+    const [newStatus, setNewStatus] = useState(true);
+    const [statusReason, setStatusReason] = useState('');
+    const [userStats, setUserStats] = useState<any>(null);
+    const [userHistory, setUserHistory] = useState<any[]>([]);
+    const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
+    const [showBulkModal, setShowBulkModal] = useState(false);
+    const [bulkAction, setBulkAction] = useState('');
+
+    const USERS_PER_PAGE = 50;
+
+    useEffect(() => {
+      loadUsers();
+    }, [searchTerm, filterRole, filterStatus, currentPage]);
+
+    const loadUsers = async () => {
+      try {
+        setLoading(true);
+        const params = new URLSearchParams({
+          page: currentPage.toString(),
+          limit: USERS_PER_PAGE.toString()
+        });
+
+        if (searchTerm) params.append('search', searchTerm);
+        if (filterRole !== 'all') params.append('role', filterRole);
+        if (filterStatus !== 'all') params.append('status', filterStatus);
+
+        const response = await fetch(`${API_BASE_URL}/api/admin/users?${params.toString()}`, {
+          headers: TokenStorage.getAuthHeader()
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setUsers(data.users || []);
+          setTotalPages(data.pages || 1);
+          setTotalUsers(data.total || 0);
+        } else {
+          throw new Error('Erro ao carregar usuários');
+        }
+      } catch (error: any) {
+        console.error('Erro ao carregar usuários:', error);
+        ToastService.error('Erro ao carregar usuários');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    const loadUserStats = async (userId: string) => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/stats`, {
+          headers: TokenStorage.getAuthHeader()
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setUserStats(data);
+        }
+      } catch (error) {
+        console.error('Erro ao carregar estatísticas:', error);
+      }
+    };
+
+    const loadUserHistory = async (userId: string) => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/history`, {
+          headers: TokenStorage.getAuthHeader()
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setUserHistory(data.activities || []);
+        }
+      } catch (error) {
+        console.error('Erro ao carregar histórico:', error);
+      }
+    };
+
+    const handleViewUser = async (user: any) => {
+      setSelectedUser(user);
+      setShowUserModal(true);
+      await loadUserStats(user.id);
+      await loadUserHistory(user.id);
+    };
+
+    const handleChangeRole = async () => {
+      if (!selectedUser || !newRole) return;
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/admin/users/${selectedUser.id}/role`, {
+          method: 'PUT',
+          headers: {
+            ...TokenStorage.getAuthHeader(),
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ role: newRole })
+        });
+
+        if (response.ok) {
+          ToastService.success(`Cargo alterado para ${newRole}`);
+          setShowRoleModal(false);
+          loadUsers();
+          if (showUserModal) {
+            const updatedUser = { ...selectedUser, role: newRole };
+            setSelectedUser(updatedUser);
+          }
+        } else {
+          const error = await response.json();
+          throw new Error(error.message || 'Erro ao alterar cargo');
+        }
+      } catch (error: any) {
+        ToastService.error(ErrorTranslator.translate(error));
+      }
+    };
+
+    const handleChangeStatus = async () => {
+      if (!selectedUser) return;
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/admin/users/${selectedUser.id}/status`, {
+          method: 'PUT',
+          headers: {
+            ...TokenStorage.getAuthHeader(),
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            isActive: newStatus,
+            reason: statusReason || undefined
+          })
+        });
+
+        if (response.ok) {
+          ToastService.success(`Usuário ${newStatus ? 'ativado' : 'desativado'}`);
+          setShowStatusModal(false);
+          setStatusReason('');
+          loadUsers();
+          if (showUserModal) {
+            const updatedUser = { ...selectedUser, isActive: newStatus };
+            setSelectedUser(updatedUser);
+          }
+        } else {
+          const error = await response.json();
+          throw new Error(error.message || 'Erro ao alterar status');
+        }
+      } catch (error: any) {
+        ToastService.error(ErrorTranslator.translate(error));
+      }
+    };
+
+    const handleBulkAction = async () => {
+      if (selectedUsers.size === 0 || !bulkAction) return;
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/admin/users/bulk-action`, {
+          method: 'POST',
+          headers: {
+            ...TokenStorage.getAuthHeader(),
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            userIds: Array.from(selectedUsers),
+            action: bulkAction
+          })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          ToastService.success(`${data.affected} usuários atualizados`);
+          setShowBulkModal(false);
+          setSelectedUsers(new Set());
+          loadUsers();
+        } else {
+          const error = await response.json();
+          throw new Error(error.message || 'Erro na ação em massa');
+        }
+      } catch (error: any) {
+        ToastService.error(ErrorTranslator.translate(error));
+      }
+    };
+
+    const handleExportUsers = async () => {
+      try {
+        const params = new URLSearchParams({
+          format: 'csv',
+          role: filterRole,
+          status: filterStatus
+        });
+
+        const response = await fetch(`${API_BASE_URL}/api/admin/users/export?${params.toString()}`, {
+          headers: TokenStorage.getAuthHeader()
+        });
+
+        if (!response.ok) {
+          throw new Error('Erro ao exportar usuários');
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `usuarios-hpo-${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+
+        ToastService.success('Usuários exportados com sucesso');
+      } catch (error: any) {
+        ToastService.error('Erro ao exportar usuários');
+      }
+    };
+
+    const toggleUserSelection = (userId: string) => {
+      const newSelection = new Set(selectedUsers);
+      if (newSelection.has(userId)) {
+        newSelection.delete(userId);
+      } else {
+        newSelection.add(userId);
+      }
+      setSelectedUsers(newSelection);
+    };
+
+    const toggleSelectAll = () => {
+      if (selectedUsers.size === users.length) {
+        setSelectedUsers(new Set());
+      } else {
+        setSelectedUsers(new Set(users.map(u => u.id)));
+      }
+    };
+
+    const getRoleBadge = (role: string) => {
+      const styles: Record<string, any> = {
+        ADMIN: { bg: '#dc2626', icon: '👑' },
+        MODERATOR: { bg: '#ea580c', icon: '🛡️' },
+        REVIEWER: { bg: '#0891b2', icon: '✅' },
+        TRANSLATOR: { bg: '#16a34a', icon: '📝' }
+      };
+      const style = styles[role] || { bg: '#6b7280', icon: '👤' };
+      return (
+        <span style={{
+          backgroundColor: style.bg,
+          color: 'white',
+          padding: '4px 12px',
+          borderRadius: '12px',
+          fontSize: '12px',
+          fontWeight: '600'
+        }}>
+          {style.icon} {role}
+        </span>
+      );
+    };
+
+    const getStatusBadge = (isActive: boolean) => {
+      return (
+        <span style={{
+          backgroundColor: isActive ? '#16a34a' : '#dc2626',
+          color: 'white',
+          padding: '4px 12px',
+          borderRadius: '12px',
+          fontSize: '12px',
+          fontWeight: '600'
+        }}>
+          {isActive ? '✅ Ativo' : '🚫 Inativo'}
+        </span>
+      );
+    };
+
+    return (
+      <div style={{ padding: '30px', maxWidth: '1800px', margin: '0 auto', backgroundColor: '#f8fafc', minHeight: '100vh' }}>
+        {/* Header */}
+        <div style={{
+          backgroundColor: 'white',
+          borderRadius: '16px',
+          padding: '30px',
+          marginBottom: '30px',
+          boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <div>
+              <h1 style={{ margin: 0, fontSize: '32px', fontWeight: '700', color: '#1e40af', display: 'flex', alignItems: 'center', gap: '15px' }}>
+                👥 Gestão de Usuários
+              </h1>
+              <p style={{ margin: '10px 0 0 0', color: '#64748b' }}>
+                {totalUsers} usuários cadastrados na plataforma
+              </p>
+            </div>
+            <button
+              onClick={handleExportUsers}
+              style={{
+                padding: '12px 24px',
+                backgroundColor: '#16a34a',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '600',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+            >
+              📥 Exportar CSV
+            </button>
+          </div>
+
+          {/* Filters */}
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: '15px', alignItems: 'end' }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                Buscar
+              </label>
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => {
+                  setSearchTerm(e.target.value);
+                  setCurrentPage(1);
+                }}
+                placeholder="Nome, email..."
+                style={{
+                  width: '100%',
+                  padding: '10px 15px',
+                  border: '2px solid #e5e7eb',
+                  borderRadius: '8px',
+                  fontSize: '14px'
+                }}
+              />
+            </div>
+
+            <div>
+              <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                Cargo
+              </label>
+              <select
+                value={filterRole}
+                onChange={(e) => {
+                  setFilterRole(e.target.value);
+                  setCurrentPage(1);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '10px 15px',
+                  border: '2px solid #e5e7eb',
+                  borderRadius: '8px',
+                  fontSize: '14px'
+                }}
+              >
+                <option value="all">Todos os cargos</option>
+                <option value="TRANSLATOR">Tradutor</option>
+                <option value="REVIEWER">Revisor</option>
+                <option value="MODERATOR">Moderador</option>
+                <option value="ADMIN">Admin</option>
+              </select>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                Status
+              </label>
+              <select
+                value={filterStatus}
+                onChange={(e) => {
+                  setFilterStatus(e.target.value);
+                  setCurrentPage(1);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '10px 15px',
+                  border: '2px solid #e5e7eb',
+                  borderRadius: '8px',
+                  fontSize: '14px'
+                }}
+              >
+                <option value="all">Todos os status</option>
+                <option value="active">Ativos</option>
+                <option value="inactive">Inativos</option>
+              </select>
+            </div>
+
+            {selectedUsers.size > 0 && (
+              <button
+                onClick={() => setShowBulkModal(true)}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#8b5cf6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                ⚡ Ação em Massa ({selectedUsers.size})
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Users Table */}
+        <div style={{
+          backgroundColor: 'white',
+          borderRadius: '16px',
+          padding: '30px',
+          boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+        }}>
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: '60px 0' }}>
+              <div style={{ fontSize: '48px', marginBottom: '20px' }}>⏳</div>
+              <p style={{ color: '#64748b' }}>Carregando usuários...</p>
+            </div>
+          ) : users.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '60px 0' }}>
+              <div style={{ fontSize: '48px', marginBottom: '20px' }}>🔍</div>
+              <p style={{ color: '#64748b' }}>Nenhum usuário encontrado</p>
+            </div>
+          ) : (
+            <>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#f8fafc', borderBottom: '2px solid #e5e7eb' }}>
+                      <th style={{ padding: '15px', textAlign: 'left', width: '50px' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedUsers.size === users.length && users.length > 0}
+                          onChange={toggleSelectAll}
+                          style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                        />
+                      </th>
+                      <th style={{ padding: '15px', textAlign: 'left', fontWeight: '700', color: '#374151' }}>Nome</th>
+                      <th style={{ padding: '15px', textAlign: 'left', fontWeight: '700', color: '#374151' }}>Email</th>
+                      <th style={{ padding: '15px', textAlign: 'left', fontWeight: '700', color: '#374151' }}>Cargo</th>
+                      <th style={{ padding: '15px', textAlign: 'center', fontWeight: '700', color: '#374151' }}>Pontos</th>
+                      <th style={{ padding: '15px', textAlign: 'center', fontWeight: '700', color: '#374151' }}>Nível</th>
+                      <th style={{ padding: '15px', textAlign: 'center', fontWeight: '700', color: '#374151' }}>Status</th>
+                      <th style={{ padding: '15px', textAlign: 'left', fontWeight: '700', color: '#374151' }}>Cadastro</th>
+                      <th style={{ padding: '15px', textAlign: 'center', fontWeight: '700', color: '#374151' }}>Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {users.map((user) => (
+                      <tr key={user.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                        <td style={{ padding: '15px' }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedUsers.has(user.id)}
+                            onChange={() => toggleUserSelection(user.id)}
+                            style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                          />
+                        </td>
+                        <td style={{ padding: '15px', fontWeight: '600', color: '#1f2937' }}>
+                          {user.name}
+                          {user.orcidId && <span style={{ marginLeft: '8px', fontSize: '12px', color: '#16a34a' }}>🔗 ORCID</span>}
+                        </td>
+                        <td style={{ padding: '15px', color: '#64748b', fontSize: '14px' }}>{user.email}</td>
+                        <td style={{ padding: '15px' }}>{getRoleBadge(user.role)}</td>
+                        <td style={{ padding: '15px', textAlign: 'center', fontWeight: '700', color: '#f59e0b' }}>
+                          {user.points || 0}
+                        </td>
+                        <td style={{ padding: '15px', textAlign: 'center', fontWeight: '700', color: '#8b5cf6' }}>
+                          {user.level || 1}
+                        </td>
+                        <td style={{ padding: '15px', textAlign: 'center' }}>
+                          {getStatusBadge(user.isActive !== false)}
+                        </td>
+                        <td style={{ padding: '15px', color: '#64748b', fontSize: '14px' }}>
+                          {new Date(user.createdAt).toLocaleDateString('pt-BR')}
+                        </td>
+                        <td style={{ padding: '15px', textAlign: 'center' }}>
+                          <button
+                            onClick={() => handleViewUser(user)}
+                            style={{
+                              padding: '8px 16px',
+                              backgroundColor: '#3b82f6',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '6px',
+                              cursor: 'pointer',
+                              fontSize: '13px',
+                              fontWeight: '600'
+                            }}
+                          >
+                            👁️ Ver
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginTop: '30px',
+                paddingTop: '20px',
+                borderTop: '2px solid #e5e7eb'
+              }}>
+                <div style={{ color: '#64748b', fontSize: '14px' }}>
+                  Mostrando {(currentPage - 1) * USERS_PER_PAGE + 1} a {Math.min(currentPage * USERS_PER_PAGE, totalUsers)} de {totalUsers} usuários
+                </div>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                    disabled={currentPage === 1}
+                    style={{
+                      padding: '8px 16px',
+                      backgroundColor: currentPage === 1 ? '#e5e7eb' : '#3b82f6',
+                      color: currentPage === 1 ? '#9ca3af' : 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
+                      fontSize: '14px',
+                      fontWeight: '600'
+                    }}
+                  >
+                    ← Anterior
+                  </button>
+                  <span style={{ padding: '8px 16px', color: '#374151', fontWeight: '600' }}>
+                    Página {currentPage} de {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                    disabled={currentPage === totalPages}
+                    style={{
+                      padding: '8px 16px',
+                      backgroundColor: currentPage === totalPages ? '#e5e7eb' : '#3b82f6',
+                      color: currentPage === totalPages ? '#9ca3af' : 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
+                      fontSize: '14px',
+                      fontWeight: '600'
+                    }}
+                  >
+                    Próxima →
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* User Details Modal */}
+        {showUserModal && selectedUser && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0,0,0,0.7)',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              zIndex: 1000,
+              padding: '20px'
+            }}
+            onClick={() => setShowUserModal(false)}
+          >
+            <div
+              style={{
+                backgroundColor: 'white',
+                borderRadius: '16px',
+                padding: '30px',
+                maxWidth: '900px',
+                width: '100%',
+                maxHeight: '90vh',
+                overflow: 'auto'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '25px' }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: '28px', fontWeight: '700', color: '#1f2937' }}>
+                    {selectedUser.name}
+                  </h2>
+                  <p style={{ margin: '5px 0 0 0', color: '#64748b' }}>{selectedUser.email}</p>
+                </div>
+                <button
+                  onClick={() => setShowUserModal(false)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    fontSize: '24px',
+                    cursor: 'pointer',
+                    color: '#9ca3af'
+                  }}
+                >
+                  ✖️
+                </button>
+              </div>
+
+              {/* User Info */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '30px' }}>
+                <div>
+                  <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '5px' }}>Cargo</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {getRoleBadge(selectedUser.role)}
+                    <button
+                      onClick={() => {
+                        setNewRole(selectedUser.role);
+                        setShowRoleModal(true);
+                      }}
+                      style={{
+                        padding: '6px 12px',
+                        backgroundColor: '#f3f4f6',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '12px'
+                      }}
+                    >
+                      ✏️ Alterar
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '5px' }}>Status</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {getStatusBadge(selectedUser.isActive !== false)}
+                    <button
+                      onClick={() => {
+                        setNewStatus(!(selectedUser.isActive !== false));
+                        setShowStatusModal(true);
+                      }}
+                      style={{
+                        padding: '6px 12px',
+                        backgroundColor: '#f3f4f6',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '12px'
+                      }}
+                    >
+                      ✏️ Alterar
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '5px' }}>Pontos</div>
+                  <div style={{ fontSize: '24px', fontWeight: '700', color: '#f59e0b' }}>
+                    {selectedUser.points || 0}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '5px' }}>Nível</div>
+                  <div style={{ fontSize: '24px', fontWeight: '700', color: '#8b5cf6' }}>
+                    {selectedUser.level || 1}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '5px' }}>ORCID</div>
+                  <div style={{ fontSize: '14px', fontWeight: '600', color: selectedUser.orcidId ? '#16a34a' : '#9ca3af' }}>
+                    {selectedUser.orcidId ? `🔗 ${selectedUser.orcidId}` : 'Não conectado'}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '5px' }}>Cadastro</div>
+                  <div style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                    {new Date(selectedUser.createdAt).toLocaleDateString('pt-BR', {
+                      day: '2-digit',
+                      month: 'long',
+                      year: 'numeric'
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Stats */}
+              {userStats && (
+                <div style={{ marginBottom: '30px' }}>
+                  <h3 style={{ fontSize: '20px', fontWeight: '700', color: '#1f2937', marginBottom: '15px' }}>
+                    📊 Estatísticas
+                  </h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '15px' }}>
+                    <div style={{ backgroundColor: '#f8fafc', padding: '15px', borderRadius: '8px' }}>
+                      <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '5px' }}>Traduções</div>
+                      <div style={{ fontSize: '24px', fontWeight: '700', color: '#3b82f6' }}>
+                        {userStats.stats?.contributions?.translations || 0}
+                      </div>
+                    </div>
+                    <div style={{ backgroundColor: '#f8fafc', padding: '15px', borderRadius: '8px' }}>
+                      <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '5px' }}>Aprovadas</div>
+                      <div style={{ fontSize: '24px', fontWeight: '700', color: '#16a34a' }}>
+                        {userStats.stats?.contributions?.approved || 0}
+                      </div>
+                    </div>
+                    <div style={{ backgroundColor: '#f8fafc', padding: '15px', borderRadius: '8px' }}>
+                      <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '5px' }}>Revisões</div>
+                      <div style={{ fontSize: '24px', fontWeight: '700', color: '#0891b2' }}>
+                        {userStats.stats?.contributions?.reviews || 0}
+                      </div>
+                    </div>
+                    <div style={{ backgroundColor: '#f8fafc', padding: '15px', borderRadius: '8px' }}>
+                      <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '5px' }}>Taxa Aprovação</div>
+                      <div style={{ fontSize: '24px', fontWeight: '700', color: '#8b5cf6' }}>
+                        {userStats.stats?.contributions?.approvalRate || 0}%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Recent Activity */}
+              {userHistory.length > 0 && (
+                <div>
+                  <h3 style={{ fontSize: '20px', fontWeight: '700', color: '#1f2937', marginBottom: '15px' }}>
+                    📅 Atividade Recente
+                  </h3>
+                  <div style={{ maxHeight: '300px', overflow: 'auto' }}>
+                    {userHistory.slice(0, 10).map((activity: any) => (
+                      <div
+                        key={activity.id}
+                        style={{
+                          padding: '15px',
+                          backgroundColor: '#f8fafc',
+                          borderRadius: '8px',
+                          marginBottom: '10px',
+                          borderLeft: '4px solid #3b82f6'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+                          <div>
+                            <div style={{ fontWeight: '600', color: '#1f2937', marginBottom: '5px' }}>
+                              {activity.type === 'TRANSLATION_SUBMITTED' && '📝 Nova tradução'}
+                              {activity.type === 'TRANSLATION_APPROVED' && '✅ Tradução aprovada'}
+                              {activity.type === 'REVIEW_SUBMITTED' && '🔍 Nova revisão'}
+                              {activity.type === 'LEVEL_UP' && '⬆️ Subiu de nível'}
+                              {activity.type === 'BADGE_EARNED' && '🏆 Conquista desbloqueada'}
+                            </div>
+                            <div style={{ fontSize: '13px', color: '#64748b' }}>
+                              {activity.metadata?.termName && `Termo: ${activity.metadata.termName}`}
+                              {activity.metadata?.level && `Nível ${activity.metadata.level}`}
+                            </div>
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#9ca3af', whiteSpace: 'nowrap' }}>
+                            {new Date(activity.createdAt).toLocaleDateString('pt-BR', {
+                              day: '2-digit',
+                              month: 'short',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Role Change Modal */}
+        {showRoleModal && selectedUser && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0,0,0,0.7)',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              zIndex: 1001
+            }}
+            onClick={() => setShowRoleModal(false)}
+          >
+            <div
+              style={{
+                backgroundColor: 'white',
+                borderRadius: '16px',
+                padding: '30px',
+                maxWidth: '500px',
+                width: '100%'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 style={{ margin: '0 0 20px 0', fontSize: '24px', fontWeight: '700', color: '#1f2937' }}>
+                Alterar Cargo
+              </h3>
+              <p style={{ marginBottom: '20px', color: '#64748b' }}>
+                Alterando cargo de <strong>{selectedUser.name}</strong>
+              </p>
+
+              <label style={{ display: 'block', marginBottom: '10px', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                Novo Cargo
+              </label>
+              <select
+                value={newRole}
+                onChange={(e) => setNewRole(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '2px solid #e5e7eb',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  marginBottom: '20px'
+                }}
+              >
+                <option value="TRANSLATOR">Tradutor</option>
+                <option value="REVIEWER">Revisor</option>
+                <option value="MODERATOR">Moderador</option>
+                <option value="ADMIN">Admin</option>
+              </select>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  onClick={() => setShowRoleModal(false)}
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    backgroundColor: '#f3f4f6',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: '600'
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleChangeRole}
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    backgroundColor: '#3b82f6',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: '600'
+                  }}
+                >
+                  Confirmar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Status Change Modal */}
+        {showStatusModal && selectedUser && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0,0,0,0.7)',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              zIndex: 1001
+            }}
+            onClick={() => setShowStatusModal(false)}
+          >
+            <div
+              style={{
+                backgroundColor: 'white',
+                borderRadius: '16px',
+                padding: '30px',
+                maxWidth: '500px',
+                width: '100%'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 style={{ margin: '0 0 20px 0', fontSize: '24px', fontWeight: '700', color: '#1f2937' }}>
+                {newStatus ? 'Ativar' : 'Desativar'} Usuário
+              </h3>
+              <p style={{ marginBottom: '20px', color: '#64748b' }}>
+                {newStatus ? 'Ativar' : 'Desativar'} conta de <strong>{selectedUser.name}</strong>
+              </p>
+
+              {!newStatus && (
+                <>
+                  <label style={{ display: 'block', marginBottom: '10px', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                    Motivo (opcional)
+                  </label>
+                  <textarea
+                    value={statusReason}
+                    onChange={(e) => setStatusReason(e.target.value)}
+                    placeholder="Ex: Inatividade, solicitação do usuário..."
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      marginBottom: '20px',
+                      resize: 'vertical',
+                      minHeight: '80px'
+                    }}
+                  />
+                </>
+              )}
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  onClick={() => {
+                    setShowStatusModal(false);
+                    setStatusReason('');
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    backgroundColor: '#f3f4f6',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: '600'
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleChangeStatus}
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    backgroundColor: newStatus ? '#16a34a' : '#dc2626',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: '600'
+                  }}
+                >
+                  Confirmar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Bulk Action Modal */}
+        {showBulkModal && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0,0,0,0.7)',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              zIndex: 1001
+            }}
+            onClick={() => setShowBulkModal(false)}
+          >
+            <div
+              style={{
+                backgroundColor: 'white',
+                borderRadius: '16px',
+                padding: '30px',
+                maxWidth: '500px',
+                width: '100%'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 style={{ margin: '0 0 20px 0', fontSize: '24px', fontWeight: '700', color: '#1f2937' }}>
+                Ação em Massa
+              </h3>
+              <p style={{ marginBottom: '20px', color: '#64748b' }}>
+                Aplicar ação a {selectedUsers.size} usuário(s) selecionado(s)
+              </p>
+
+              <label style={{ display: 'block', marginBottom: '10px', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                Ação
+              </label>
+              <select
+                value={bulkAction}
+                onChange={(e) => setBulkAction(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '2px solid #e5e7eb',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  marginBottom: '20px'
+                }}
+              >
+                <option value="">Selecione uma ação</option>
+                <option value="activate">✅ Ativar contas</option>
+                <option value="deactivate">🚫 Desativar contas</option>
+              </select>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  onClick={() => {
+                    setShowBulkModal(false);
+                    setBulkAction('');
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    backgroundColor: '#f3f4f6',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: '600'
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleBulkAction}
+                  disabled={!bulkAction}
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    backgroundColor: bulkAction ? '#8b5cf6' : '#e5e7eb',
+                    color: bulkAction ? 'white' : '#9ca3af',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: bulkAction ? 'pointer' : 'not-allowed',
+                    fontSize: '14px',
+                    fontWeight: '600'
+                  }}
+                >
+                  Aplicar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ============================================
   // HEADER (REORGANIZADO - Dropdown "Mais")
   // ============================================
   const Header = () => {
@@ -6915,12 +7982,37 @@ function ProductionHPOApp() {
           marginBottom: '30px',
           boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
         }}>
-          <h1 style={{ margin: 0, fontSize: '32px', fontWeight: '700', color: '#1e40af', display: 'flex', alignItems: 'center', gap: '15px' }}>
-            👑 Dashboard Administrativo
-          </h1>
-          <p style={{ margin: '10px 0 0 0', color: '#64748b' }}>
-            Moderação, aprovação e gestão da plataforma HPO-PT
-          </p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <h1 style={{ margin: 0, fontSize: '32px', fontWeight: '700', color: '#1e40af', display: 'flex', alignItems: 'center', gap: '15px' }}>
+                👑 Dashboard Administrativo
+              </h1>
+              <p style={{ margin: '10px 0 0 0', color: '#64748b' }}>
+                Moderação, aprovação e gestão da plataforma HPO-PT
+              </p>
+            </div>
+            <button
+              onClick={() => setCurrentPage('admin-users')}
+              style={{
+                padding: '12px 24px',
+                backgroundColor: '#8b5cf6',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '600',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                transition: 'background-color 0.2s'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#7c3aed'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#8b5cf6'}
+            >
+              👥 Gestão de Usuários
+            </button>
+          </div>
         </div>
 
         {/* Stats Cards */}
@@ -8285,6 +9377,14 @@ function ProductionHPOApp() {
             requiredRole="MODERATOR" 
             userRole={user.role}
             message="Você precisa ser um Moderador ou ter cargo superior para acessar o Dashboard Administrativo."
+          />
+        )}
+        {currentPage === 'admin-users' && user && RoleHelpers.canAccessAdminDashboard(user.role) && <AdminUserManagementPage />}
+        {currentPage === 'admin-users' && user && !RoleHelpers.canAccessAdminDashboard(user.role) && (
+          <UnauthorizedAccess 
+            requiredRole="MODERATOR" 
+            userRole={user.role}
+            message="Você precisa ser um Moderador ou ter cargo superior para acessar a Gestão de Usuários."
           />
         )}
         {currentPage === 'guidelines' && user && <GuidelinesPage onBack={() => setCurrentPage('dashboard')} />}
