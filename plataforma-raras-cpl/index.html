@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    
+    <!-- Basic SEO Meta Tags -->
+    <meta name="description" content="Plataforma colaborativa para tradução dos 17.000+ termos da Human Phenotype Ontology (HPO) para português. Sistema de gamificação, validação por pares e contribuição reconhecida via ORCID iD." />
+    <meta name="keywords" content="HPO, Human Phenotype Ontology, tradução médica, doenças raras, fenótipos, CPLP, português, ORCID, bioinformática, genética, medicina, colaboração científica" />
+    <meta name="author" content="RARAS-CPLP" />
+    <meta name="robots" content="index, follow" />
+    <meta name="language" content="Portuguese" />
+    <link rel="canonical" href="https://hpo.raras-cplp.org" />
+    
+    <!-- Open Graph / Facebook / LinkedIn -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://hpo.raras-cplp.org" />
+    <meta property="og:title" content="HPO-PT | Tradução Colaborativa do Human Phenotype Ontology" />
+    <meta property="og:description" content="Traduza termos médicos da HPO para português. Sistema de gamificação, validação por pares e reconhecimento acadêmico via ORCID. Junte-se à comunidade CPLP!" />
+    <meta property="og:image" content="https://hpo.raras-cplp.org/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content="pt_BR" />
+    <meta property="og:locale:alternate" content="pt_PT" />
+    <meta property="og:site_name" content="HPO-PT Platform" />
+    
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:url" content="https://hpo.raras-cplp.org" />
+    <meta name="twitter:title" content="HPO-PT | Tradução Colaborativa" />
+    <meta name="twitter:description" content="Plataforma de tradução colaborativa da Human Phenotype Ontology para português com gamificação, validação por pares e ORCID." />
+    <meta name="twitter:image" content="https://hpo.raras-cplp.org/twitter-card.png" />
+    
+    <!-- JSON-LD Structured Data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "HPO-PT Platform",
+      "alternateName": "Human Phenotype Ontology - Portuguese Translation",
+      "description": "Plataforma colaborativa de tradução da Human Phenotype Ontology para português, com sistema de gamificação, validação por pares e integração ORCID.",
+      "url": "https://hpo.raras-cplp.org",
+      "applicationCategory": "MedicalApplication",
+      "operatingSystem": "Web",
+      "inLanguage": "pt-BR",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "provider": {
+        "@type": "Organization",
+        "name": "RARAS-CPLP",
+        "url": "https://raras-cplp.org"
+      },
+      "audience": {
+        "@type": "Audience",
+        "audienceType": ["Researchers", "Medical Professionals", "Translators", "Bioinformaticians"]
+      },
+      "featureList": [
+        "Tradução colaborativa de termos HPO",
+        "Sistema de gamificação com pontos e níveis",
+        "Validação por pares",
+        "Integração com ORCID iD",
+        "Exportação formato Babelon",
+        "Perfis profissionais",
+        "Ranking de colaboradores"
+      ]
+    }
+    </script>
+    
+    <!-- Cache busting AGRESSIVO - força recarregar SEMPRE -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate, max-age=0" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="-1" />
+    
+    <title>HPO-PT Platform - Tradução Colaborativa | RARAS-CPLP</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <link href="/src/main.css?v=<?= time() ?>" rel="stylesheet" />
+    
+    <script>
+        // ✅ CACHE BUSTING ULTRA AGRESSIVO
+        
+        // 1. Desregistrar todos os service workers
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(registrations => {
+                registrations.forEach(reg => reg.unregister());
+            });
+        }
+        
+        // 2. Limpar todos os caches do browser
+        if ('caches' in window) {
+            caches.keys().then(names => {
+                names.forEach(name => caches.delete(name));
+            });
+        }
+        
+        // 3. Força reload em caso de back/forward cache
+        if (window.performance && performance.navigation.type === 2) {
+            location.reload(true);
+        }
+        
+        // 4. Adicionar timestamp em TODAS as requisições
+        const originalFetch = window.fetch;
+        window.fetch = function(...args) {
+            if (typeof args[0] === 'string') {
+                const url = new URL(args[0], window.location.origin);
+                url.searchParams.set('_t', Date.now().toString());
+                args[0] = url.toString();
+            }
+            return originalFetch.apply(this, args);
+        };
+    </script>
+</head>
+
+<body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>

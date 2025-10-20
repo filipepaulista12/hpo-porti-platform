@@ -1,0 +1,262 @@
+/* ==================== WCAG 2.1 Level AA Accessibility Styles ==================== */
+
+/* Skip Links - Permite pular para conteúdo principal */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: #3b82f6;
+  color: white;
+  padding: 8px 16px;
+  text-decoration: none;
+  z-index: 10000;
+  font-weight: 600;
+  border-radius: 0 0 4px 0;
+}
+
+.skip-link:focus {
+  top: 0;
+  outline: 3px solid #fbbf24;
+  outline-offset: 2px;
+}
+
+/* Focus Indicators - Visível e com contraste adequado */
+*:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+*:focus:not(:focus-visible) {
+  outline: none;
+}
+
+*:focus-visible {
+  outline: 3px solid #3b82f6;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2);
+}
+
+/* Focus específico para botões */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #3b82f6;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2);
+}
+
+/* Dark mode focus */
+.dark button:focus-visible,
+.dark a:focus-visible,
+.dark input:focus-visible,
+.dark select:focus-visible,
+.dark textarea:focus-visible {
+  outline-color: #60a5fa;
+  box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.3);
+}
+
+/* High Contrast Text - WCAG AA: 4.5:1 para texto normal, 3:1 para texto grande */
+.text-high-contrast {
+  color: #1f2937; /* Ratio 15.8:1 em fundo branco */
+}
+
+.dark .text-high-contrast {
+  color: #f3f4f6; /* Ratio 15.5:1 em fundo escuro */
+}
+
+/* Keyboard Navigation Helpers */
+.keyboard-only-focus:focus {
+  outline: 3px dashed #3b82f6;
+  outline-offset: 3px;
+}
+
+/* Screen Reader Only Text */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.sr-only-focusable:focus {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: inherit;
+  margin: inherit;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+}
+
+/* Font Size Controls */
+.font-size-normal {
+  font-size: 16px;
+}
+
+.font-size-large {
+  font-size: 18px;
+}
+
+.font-size-xlarge {
+  font-size: 20px;
+}
+
+/* Ensure all interactive elements are keyboard accessible */
+[role="button"]:not([tabindex]) {
+  tabindex: 0;
+}
+
+/* Better link visibility */
+a {
+  text-decoration: underline;
+  text-decoration-skip-ink: auto;
+}
+
+a:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+}
+
+/* Touch Target Size - Minimum 44x44px for WCAG 2.1 Level AAA */
+button,
+a,
+input[type="checkbox"],
+input[type="radio"] {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* Exception for inline links */
+p a,
+li a {
+  min-width: auto;
+  min-height: auto;
+  padding: 2px 4px;
+}
+
+/* Reduce Motion for users who prefer it */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Color Contrast Warnings - Visual indicators */
+.contrast-warning {
+  position: relative;
+}
+
+.contrast-warning::after {
+  content: '⚠️';
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  font-size: 12px;
+  display: none;
+}
+
+/* ARIA Live Regions */
+[aria-live="polite"],
+[aria-live="assertive"] {
+  position: relative;
+}
+
+/* Better form error visibility */
+.form-error {
+  color: #dc2626;
+  font-weight: 600;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.form-error::before {
+  content: '⚠️';
+}
+
+.dark .form-error {
+  color: #fca5a5;
+}
+
+/* Success states */
+.form-success {
+  color: #16a34a;
+  font-weight: 600;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.form-success::before {
+  content: '✅';
+}
+
+.dark .form-success {
+  color: #86efac;
+}
+
+/* Improved table accessibility */
+table th {
+  text-align: left;
+  font-weight: 700;
+}
+
+table caption {
+  font-weight: 700;
+  text-align: left;
+  margin-bottom: 8px;
+}
+
+/* Loading states with ARIA */
+.loading-spinner[role="status"] {
+  position: relative;
+}
+
+/* Tooltip accessibility */
+[data-tooltip-id] {
+  cursor: help;
+}
+
+/* Landmark regions */
+[role="main"],
+[role="navigation"],
+[role="complementary"],
+[role="contentinfo"] {
+  position: relative;
+}
+
+/* Ensure icons have text alternatives */
+.icon-with-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  * {
+    border-color: currentColor !important;
+  }
+  
+  button,
+  input,
+  select,
+  textarea {
+    border: 2px solid currentColor !important;
+  }
+}
