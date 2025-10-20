@@ -200,7 +200,7 @@ function ProductionHPOApp() {
   const [user, setUser] = useState<User | null>(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(false); // Novo estado para controlar loading
   // Inicia em 'dashboard' se tiver token, senão 'home'
-  const [currentPage, setCurrentPage] = useState<'home' | 'login' | 'register' | 'dashboard' | 'translate' | 'review' | 'leaderboard' | 'history' | 'admin' | 'profile' | 'guidelines'>(() => {
+  const [currentPage, setCurrentPage] = useState<'home' | 'login' | 'register' | 'dashboard' | 'translate' | 'review' | 'leaderboard' | 'history' | 'admin' | 'profile' | 'guidelines' | 'points'>(() => {
     const token = TokenStorage.get();
     return (token && !TokenStorage.isExpired()) ? 'dashboard' : 'home';
   });
@@ -5090,6 +5090,484 @@ function ProductionHPOApp() {
   };
 
   // ============================================
+  // GAMIFICATION PAGE (Sistema de Pontuação) - Task #4
+  // ============================================
+  const GamificationPage = () => {
+    interface PointRule {
+      action: string;
+      points: number;
+      icon: string;
+      description: string;
+      frequency?: string;
+    }
+
+    const pointRules: PointRule[] = [
+      {
+        action: 'Traduzir Termo',
+        points: 10,
+        icon: '📝',
+        description: 'Submeter uma nova tradução para review',
+        frequency: 'Por tradução'
+      },
+      {
+        action: 'Tradução Aprovada',
+        points: 25,
+        icon: '✅',
+        description: 'Sua tradução foi aprovada por revisores',
+        frequency: 'Por aprovação'
+      },
+      {
+        action: 'Revisar Tradução',
+        points: 15,
+        icon: '🔍',
+        description: 'Revisar e votar em traduções pendentes (REVIEWER+)',
+        frequency: 'Por revisão'
+      },
+      {
+        action: 'Tradução de Alta Qualidade',
+        points: 50,
+        icon: '⭐',
+        description: 'Tradução aprovada com nota média ≥ 4.5',
+        frequency: 'Bônus'
+      },
+      {
+        action: 'Preencher Perfil Completo',
+        points: 100,
+        icon: '📋',
+        description: 'Completar 100% do perfil (dados pessoais + profissionais + eHEALS)',
+        frequency: 'Uma vez'
+      },
+      {
+        action: 'Conectar ORCID',
+        points: 50,
+        icon: '🔗',
+        description: 'Vincular conta ORCID para autenticidade científica',
+        frequency: 'Uma vez'
+      },
+      {
+        action: 'Login Diário',
+        points: 5,
+        icon: '📅',
+        description: 'Fazer login consecutivo por dia',
+        frequency: 'Diário'
+      },
+      {
+        action: 'Streak 7 dias',
+        points: 50,
+        icon: '🔥',
+        description: 'Contribuir por 7 dias consecutivos',
+        frequency: 'Bônus'
+      },
+      {
+        action: 'Streak 30 dias',
+        points: 200,
+        icon: '🏆',
+        description: 'Contribuir por 30 dias consecutivos',
+        frequency: 'Bônus'
+      },
+      {
+        action: 'Convidar Amigo',
+        points: 75,
+        icon: '💌',
+        description: 'Amigo aceita convite e faz primeira contribuição',
+        frequency: 'Por convite aceito'
+      },
+      {
+        action: 'Comentar Tradução',
+        points: 5,
+        icon: '💬',
+        description: 'Adicionar comentário construtivo em tradução',
+        frequency: 'Por comentário'
+      },
+      {
+        action: 'Top 10 no Ranking Mensal',
+        points: 300,
+        icon: '🥇',
+        description: 'Ficar entre os 10 melhores do mês',
+        frequency: 'Mensal'
+      }
+    ];
+
+    const levels = [
+      { level: 1, minPoints: 0, maxPoints: 99, title: 'Iniciante', icon: '🌱', color: '#94a3b8' },
+      { level: 2, minPoints: 100, maxPoints: 249, title: 'Aprendiz', icon: '📚', color: '#60a5fa' },
+      { level: 3, minPoints: 250, maxPoints: 499, title: 'Colaborador', icon: '🤝', color: '#34d399' },
+      { level: 4, minPoints: 500, maxPoints: 999, title: 'Especialista', icon: '⭐', color: '#fbbf24' },
+      { level: 5, minPoints: 1000, maxPoints: 2499, title: 'Mestre', icon: '🎓', color: '#f59e0b' },
+      { level: 6, minPoints: 2500, maxPoints: 4999, title: 'Veterano', icon: '🏅', color: '#8b5cf6' },
+      { level: 7, minPoints: 5000, maxPoints: 9999, title: 'Lenda', icon: '👑', color: '#ec4899' },
+      { level: 8, minPoints: 10000, maxPoints: Infinity, title: 'Mestre HPO', icon: '🔮', color: '#dc2626' }
+    ];
+
+    const getCurrentLevel = (points: number) => {
+      return levels.find(l => points >= l.minPoints && points <= l.maxPoints) || levels[0];
+    };
+
+    const getNextLevel = (points: number) => {
+      const currentLevel = getCurrentLevel(points);
+      const currentIndex = levels.findIndex(l => l.level === currentLevel.level);
+      return currentIndex < levels.length - 1 ? levels[currentIndex + 1] : null;
+    };
+
+    const currentLevel = getCurrentLevel(user?.points || 0);
+    const nextLevel = getNextLevel(user?.points || 0);
+    const progressToNext = nextLevel 
+      ? ((user?.points || 0) - currentLevel.minPoints) / (nextLevel.minPoints - currentLevel.minPoints) * 100
+      : 100;
+
+    return (
+      <div style={{ backgroundColor: '#f8fafc', minHeight: 'calc(100vh - 80px)', padding: '40px 20px' }}>
+        <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+          <Breadcrumbs items={[
+            { label: 'Dashboard', page: 'dashboard' },
+            { label: 'Sistema de Pontuação' }
+          ]} />
+
+          {/* Header */}
+          <div style={{
+            background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
+            borderRadius: '16px',
+            padding: '40px',
+            color: 'white',
+            marginTop: '20px',
+            boxShadow: '0 10px 25px rgba(251, 191, 36, 0.3)'
+          }}>
+            <h1 style={{ margin: 0, fontSize: '36px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '15px' }}>
+              🏆 Sistema de Pontuação
+            </h1>
+            <p style={{ margin: '10px 0 0 0', fontSize: '18px', opacity: 0.95 }}>
+              Ganhe pontos, suba de nível e contribua para a ciência em português!
+            </p>
+          </div>
+
+          {/* Current Status Card */}
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '16px',
+            padding: '30px',
+            marginTop: '30px',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+          }}>
+            <h2 style={{ margin: '0 0 20px 0', fontSize: '24px', fontWeight: '700', color: '#1f2937' }}>
+              📊 Seu Progresso Atual
+            </h2>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px', marginBottom: '30px' }}>
+              <div style={{ 
+                padding: '20px', 
+                backgroundColor: currentLevel.color + '15', 
+                borderRadius: '12px',
+                border: `2px solid ${currentLevel.color}`
+              }}>
+                <div style={{ fontSize: '48px', textAlign: 'center' }}>{currentLevel.icon}</div>
+                <div style={{ fontSize: '24px', fontWeight: '700', textAlign: 'center', color: currentLevel.color, marginTop: '10px' }}>
+                  Nível {currentLevel.level}
+                </div>
+                <div style={{ fontSize: '16px', textAlign: 'center', color: '#6b7280', marginTop: '5px' }}>
+                  {currentLevel.title}
+                </div>
+              </div>
+
+              <div style={{ padding: '20px', backgroundColor: '#eff6ff', borderRadius: '12px', border: '2px solid #3b82f6' }}>
+                <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '5px' }}>Total de Pontos</div>
+                <div style={{ fontSize: '36px', fontWeight: '700', color: '#1e40af' }}>
+                  {user?.points || 0}
+                </div>
+                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '5px' }}>
+                  pontos acumulados
+                </div>
+              </div>
+
+              {nextLevel && (
+                <div style={{ padding: '20px', backgroundColor: '#fef3c7', borderRadius: '12px', border: '2px solid #f59e0b' }}>
+                  <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '5px' }}>Próximo Nível</div>
+                  <div style={{ fontSize: '28px', fontWeight: '700', color: '#92400e', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {nextLevel.icon} {nextLevel.title}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '5px' }}>
+                    Faltam {nextLevel.minPoints - (user?.points || 0)} pontos
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Progress Bar */}
+            {nextLevel && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '14px', color: '#6b7280' }}>
+                    Progresso para {nextLevel.title}
+                  </span>
+                  <span style={{ fontSize: '14px', fontWeight: '600', color: currentLevel.color }}>
+                    {Math.round(progressToNext)}%
+                  </span>
+                </div>
+                <div style={{
+                  width: '100%',
+                  height: '20px',
+                  backgroundColor: '#e5e7eb',
+                  borderRadius: '10px',
+                  overflow: 'hidden'
+                }}>
+                  <div style={{
+                    width: `${progressToNext}%`,
+                    height: '100%',
+                    background: `linear-gradient(90deg, ${currentLevel.color}, ${nextLevel.color})`,
+                    transition: 'width 0.5s ease'
+                  }} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Point Rules Table */}
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '16px',
+            padding: '30px',
+            marginTop: '30px',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+          }}>
+            <h2 style={{ margin: '0 0 20px 0', fontSize: '24px', fontWeight: '700', color: '#1f2937' }}>
+              💰 Como Ganhar Pontos
+            </h2>
+            <p style={{ margin: '0 0 30px 0', color: '#6b7280' }}>
+              Todas as ações que geram pontos na plataforma
+            </p>
+
+            <div style={{ display: 'grid', gap: '15px' }}>
+              {pointRules.map((rule, index) => (
+                <div
+                  key={index}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '60px 1fr 100px 150px',
+                    alignItems: 'center',
+                    padding: '20px',
+                    backgroundColor: theme === 'dark' ? '#1f2937' : '#f9fafb',
+                    borderRadius: '12px',
+                    border: `2px solid ${theme === 'dark' ? '#374151' : '#e5e7eb'}`,
+                    gap: '15px'
+                  }}
+                >
+                  <div style={{ fontSize: '36px', textAlign: 'center' }}>{rule.icon}</div>
+                  <div>
+                    <div style={{ fontSize: '16px', fontWeight: '600', color: theme === 'dark' ? '#f9fafb' : '#1f2937' }}>
+                      {rule.action}
+                    </div>
+                    <div style={{ fontSize: '14px', color: '#6b7280', marginTop: '4px' }}>
+                      {rule.description}
+                    </div>
+                  </div>
+                  <div style={{
+                    fontSize: '24px',
+                    fontWeight: '700',
+                    color: '#10b981',
+                    textAlign: 'center'
+                  }}>
+                    +{rule.points}
+                  </div>
+                  <div style={{
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: 'white',
+                    backgroundColor: '#6b7280',
+                    padding: '6px 12px',
+                    borderRadius: '20px',
+                    textAlign: 'center'
+                  }}>
+                    {rule.frequency}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Levels Table */}
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '16px',
+            padding: '30px',
+            marginTop: '30px',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+          }}>
+            <h2 style={{ margin: '0 0 20px 0', fontSize: '24px', fontWeight: '700', color: '#1f2937' }}>
+              🎖️ Níveis e Conquistas
+            </h2>
+            <p style={{ margin: '0 0 30px 0', color: '#6b7280' }}>
+              Suba de nível conforme acumula pontos
+            </p>
+
+            <div style={{ display: 'grid', gap: '15px' }}>
+              {levels.map((level) => {
+                const isCurrentLevel = user?.level === level.level;
+                const isUnlocked = (user?.points || 0) >= level.minPoints;
+                
+                return (
+                  <div
+                    key={level.level}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '80px 1fr 200px',
+                      alignItems: 'center',
+                      padding: '20px',
+                      backgroundColor: isCurrentLevel 
+                        ? level.color + '15' 
+                        : theme === 'dark' ? '#1f2937' : '#f9fafb',
+                      borderRadius: '12px',
+                      border: `2px solid ${isCurrentLevel ? level.color : (theme === 'dark' ? '#374151' : '#e5e7eb')}`,
+                      gap: '20px',
+                      opacity: isUnlocked ? 1 : 0.5
+                    }}
+                  >
+                    <div style={{ fontSize: '48px', textAlign: 'center' }}>
+                      {isUnlocked ? level.icon : '🔒'}
+                    </div>
+                    <div>
+                      <div style={{ 
+                        fontSize: '20px', 
+                        fontWeight: '700', 
+                        color: isCurrentLevel ? level.color : (theme === 'dark' ? '#f9fafb' : '#1f2937'),
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px'
+                      }}>
+                        Nível {level.level}: {level.title}
+                        {isCurrentLevel && (
+                          <span style={{
+                            fontSize: '12px',
+                            fontWeight: '600',
+                            backgroundColor: level.color,
+                            color: 'white',
+                            padding: '4px 8px',
+                            borderRadius: '12px'
+                          }}>
+                            SEU NÍVEL
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '14px', color: '#6b7280', marginTop: '4px' }}>
+                        {level.maxPoints === Infinity 
+                          ? `${level.minPoints}+ pontos`
+                          : `${level.minPoints} - ${level.maxPoints} pontos`
+                        }
+                      </div>
+                    </div>
+                    <div style={{
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      color: isUnlocked ? '#10b981' : '#6b7280',
+                      textAlign: 'right'
+                    }}>
+                      {isUnlocked ? '✅ Desbloqueado' : '🔒 Bloqueado'}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* FAQ Section */}
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '16px',
+            padding: '30px',
+            marginTop: '30px',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+          }}>
+            <h2 style={{ margin: '0 0 20px 0', fontSize: '24px', fontWeight: '700', color: '#1f2937' }}>
+              ❓ Perguntas Frequentes
+            </h2>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div>
+                <div style={{ fontSize: '16px', fontWeight: '600', color: theme === 'dark' ? '#f9fafb' : '#1f2937', marginBottom: '8px' }}>
+                  📌 Os pontos expiram?
+                </div>
+                <div style={{ fontSize: '14px', color: '#6b7280' }}>
+                  Não! Seus pontos são permanentes e acumulam indefinidamente.
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: '16px', fontWeight: '600', color: theme === 'dark' ? '#f9fafb' : '#1f2937', marginBottom: '8px' }}>
+                  📌 Posso perder pontos?
+                </div>
+                <div style={{ fontSize: '14px', color: '#6b7280' }}>
+                  Sim, se uma tradução sua for rejeitada após revisão, você pode perder os pontos ganhos inicialmente. Foque em qualidade!
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: '16px', fontWeight: '600', color: theme === 'dark' ? '#f9fafb' : '#1f2937', marginBottom: '8px' }}>
+                  📌 Como funciona o sistema de convites?
+                </div>
+                <div style={{ fontSize: '14px', color: '#6b7280' }}>
+                  Convide amigos por email. Você ganha {pointRules.find(r => r.action === 'Convidar Amigo')?.points} pontos quando eles se registram E fazem a primeira contribuição.
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: '16px', fontWeight: '600', color: theme === 'dark' ? '#f9fafb' : '#1f2937', marginBottom: '8px' }}>
+                  📌 O que acontece quando alcanço o nível máximo?
+                </div>
+                <div style={{ fontSize: '14px', color: '#6b7280' }}>
+                  Você se torna um Mestre HPO! Continue contribuindo - seus pontos e reconhecimento permanecem no ranking.
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: '16px', fontWeight: '600', color: theme === 'dark' ? '#f9fafb' : '#1f2937', marginBottom: '8px' }}>
+                  📌 Há recompensas além de pontos?
+                </div>
+                <div style={{ fontSize: '14px', color: '#6b7280' }}>
+                  Sim! Contribuidores de destaque podem receber badges especiais, menções em publicações científicas, e certificados de contribuição.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* CTA Button */}
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '16px',
+            padding: '40px',
+            marginTop: '30px',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+            textAlign: 'center'
+          }}>
+            <h3 style={{ margin: '0 0 15px 0', fontSize: '24px', fontWeight: '700', color: '#1f2937' }}>
+              Pronto para ganhar pontos?
+            </h3>
+            <p style={{ margin: '0 0 25px 0', color: '#6b7280', fontSize: '16px' }}>
+              Comece agora a traduzir termos e suba no ranking!
+            </p>
+            <button
+              onClick={() => setCurrentPage('translate')}
+              style={{
+                padding: '16px 40px',
+                backgroundColor: '#10b981',
+                color: 'white',
+                border: 'none',
+                borderRadius: '12px',
+                fontSize: '18px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
+                transition: 'all 0.3s ease'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+              onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+            >
+              🚀 Começar a Traduzir
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ============================================
   // HEADER
   // ============================================
   const Header = () => (
@@ -5236,6 +5714,24 @@ function ProductionHPOApp() {
             }}
           >
             📖 Diretrizes
+          </button>
+
+          {/* Points/Gamification Button */}
+          <button
+            onClick={() => setCurrentPage('points')}
+            aria-label="Ir para Sistema de Pontuação"
+            aria-current={currentPage === 'points' ? 'page' : undefined}
+            style={{
+              padding: '8px 16px',
+              backgroundColor: currentPage === 'points' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '14px'
+            }}
+          >
+            🏆 Pontos
           </button>
 
           {/* Profile Button */}
@@ -7102,6 +7598,7 @@ function ProductionHPOApp() {
           />
         )}
         {currentPage === 'guidelines' && user && <GuidelinesPage onBack={() => setCurrentPage('dashboard')} />}
+        {currentPage === 'points' && user && <GamificationPage />}
       </main>
 
       {/* Toast Notifications */}
