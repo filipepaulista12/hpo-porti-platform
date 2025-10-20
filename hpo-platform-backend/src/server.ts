@@ -26,6 +26,8 @@ import commentRoutes from './routes/comment.routes';
 import conflictRoutes from './routes/conflict.routes';
 import analyticsRoutes from './routes/analytics.routes';
 import testRoutes from './routes/test.routes';
+import referralRoutes from './routes/referral.routes';
+import gamificationRoutes from './routes/gamification.routes';
 
 // Load environment variables
 dotenv.config();
@@ -111,6 +113,8 @@ app.use('/api/invite', inviteRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/conflicts', conflictRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/referrals', referralRoutes);
+app.use('/api/gamification', gamificationRoutes);
 app.use('/api/test', testRoutes);
 
 // 404 handler

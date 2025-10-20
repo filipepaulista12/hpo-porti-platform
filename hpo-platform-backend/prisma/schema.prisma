@@ -38,6 +38,7 @@ model User {
   lastActiveAt  DateTime?
   lastLoginAt   DateTime? // Track last login for analytics
   approvedCount Int       @default(0) // Count of approved translations
+  profileCompletedAt DateTime? // When user completed 100% profile for gamification bonus
   
   // Onboarding
   hasCompletedOnboarding Boolean   @default(false)
@@ -64,6 +65,9 @@ model User {
   comments      Comment[]
   badges        UserBadge[]
   activities    UserActivity[]
+  professionalProfile ProfessionalProfile?
+  referralsMade Referral[] @relation("ReferrerRelation")
+  referralsReceived Referral[] @relation("RefereeRelation")
   
   // Admin relations
   conflictVotes     CommitteeVote[]
@@ -360,6 +364,72 @@ enum ActivityType {
   STREAK_MILESTONE
   COMMENT_ADDED
   ROLE_PROMOTION
+}
+
+// ============================================
+// PROFESSIONAL PROFILE & REFERRAL SYSTEM
+// ============================================
+
+model ProfessionalProfile {
+  id                  String    @id @default(uuid())
+  userId              String    @unique
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Academic Background
+  academicDegree      String?   // Licenciatura, Mestrado, Doutorado, etc.
+  fieldOfStudy        String?   // Medicina, Biologia, Enfermagem, etc.
+  institution         String?
+  yearsOfExperience   String?   // 0-2, 3-5, 6-10, 10+
+  
+  // Professional Information
+  professionalRole    String?   // Médico, Pesquisador, Estudante, etc.
+  medicalSpecialty    String?   // Neurologia, Cardiologia, etc. (if applicable)
+  researchArea        String?   // Rare diseases, Genetics, etc.
+  
+  // Language & Skills
+  englishProficiency  String?   // Básico, Intermediário, Avançado, Fluente
+  linkedinUrl         String?
+  
+  // eHEALS (eHealth Literacy Scale)
+  ehealsScore         Int       @default(0)
+  ehealsAnswers       Json?     @default("[]") // Array of 8 answers (1-5 scale)
+  ehealsCompletedAt   DateTime?
+  
+  // Metadata
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  
+  @@map("professional_profiles")
+}
+
+model Referral {
+  id            String         @id @default(uuid())
+  referrerId    String         // User who sent the invitation
+  refereeId     String?        // User who accepted (null until registered)
+  email         String         // Email of invited person
+  referralCode  String         @unique // Unique code for tracking
+  status        ReferralStatus @default(PENDING)
+  
+  // Timestamps
+  createdAt     DateTime       @default(now())
+  acceptedAt    DateTime?      // When referee registered
+  
+  // Relations
+  referrer      User           @relation("ReferrerRelation", fields: [referrerId], references: [id], onDelete: Cascade)
+  referee       User?          @relation("RefereeRelation", fields: [refereeId], references: [id])
+  
+  @@index([referrerId])
+  @@index([refereeId])
+  @@index([email])
+  @@index([referralCode])
+  @@index([status])
+  @@map("referrals")
+}
+
+enum ReferralStatus {
+  PENDING      // Invitation sent, not yet accepted
+  REGISTERED   // User registered but hasn't made first contribution
+  ACCEPTED     // User made first contribution, points awarded
 }
 
 // ============================================
