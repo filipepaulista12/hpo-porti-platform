@@ -3578,6 +3578,43 @@ function ProductionHPOApp() {
       loadCompleteProfile();
     }, []);
 
+    // Calculate Profile Completion (Task #6)
+    const calculateProfileCompletion = () => {
+      const requiredFields = {
+        // Basic Profile (30%)
+        name: !!profileData.name,
+        email: !!profileData.email,
+        institution: !!profileData.institution,
+        
+        // Professional Profile (50%)
+        academicDegree: !!professionalProfile.academicDegree,
+        fieldOfStudy: !!professionalProfile.fieldOfStudy,
+        professionalRole: !!professionalProfile.professionalRole,
+        researchArea: !!professionalProfile.researchArea,
+        englishProficiency: !!professionalProfile.englishProficiency,
+        
+        // eHEALS Score (20%)
+        ehealsScore: professionalProfile.ehealsScore > 0
+      };
+
+      const totalFields = Object.keys(requiredFields).length;
+      const completedFields = Object.values(requiredFields).filter(Boolean).length;
+      const percentage = Math.round((completedFields / totalFields) * 100);
+      
+      return {
+        percentage,
+        completed: completedFields,
+        total: totalFields,
+        isComplete: percentage === 100,
+        missingFields: Object.entries(requiredFields)
+          .filter(([_, value]) => !value)
+          .map(([key]) => key)
+      };
+    };
+
+    const profileCompletion = calculateProfileCompletion();
+    const PROFILE_COMPLETION_POINTS = 100; // Points awarded for 100% profile
+
     const handleImportLinkedIn = () => {
       setLoadingLinkedIn(true);
       ToastService.info('🔗 A integração LinkedIn estará disponível em breve! Por enquanto, preencha manualmente.');
@@ -3697,6 +3734,112 @@ function ProductionHPOApp() {
       <div style={{ backgroundColor: '#f8fafc', minHeight: 'calc(100vh - 80px)', padding: '40px 20px' }}>
         <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
           <Breadcrumbs items={['Home', 'Perfil']} />
+          
+          {/* Profile Completion Card (Task #6) */}
+          {!profileCompletion.isComplete && (
+            <div style={{
+              backgroundColor: 'white',
+              borderRadius: '12px',
+              padding: '25px',
+              marginTop: '20px',
+              boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+              border: '2px solid #fbbf24'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginBottom: '15px' }}>
+                <div style={{ fontSize: '36px' }}>📋</div>
+                <div style={{ flex: 1 }}>
+                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1f2937' }}>
+                    Complete seu Perfil!
+                  </h3>
+                  <p style={{ margin: '5px 0 0 0', fontSize: '14px', color: '#6b7280' }}>
+                    Ganhe <strong style={{ color: '#10b981' }}>+{PROFILE_COMPLETION_POINTS} pontos</strong> ao completar 100% do seu perfil
+                  </p>
+                </div>
+                <div style={{
+                  fontSize: '32px',
+                  fontWeight: '700',
+                  color: profileCompletion.percentage >= 80 ? '#10b981' : profileCompletion.percentage >= 50 ? '#fbbf24' : '#f59e0b'
+                }}>
+                  {profileCompletion.percentage}%
+                </div>
+              </div>
+              
+              {/* Progress Bar */}
+              <div style={{
+                width: '100%',
+                height: '12px',
+                backgroundColor: '#e5e7eb',
+                borderRadius: '6px',
+                overflow: 'hidden',
+                marginBottom: '15px'
+              }}>
+                <div style={{
+                  width: `${profileCompletion.percentage}%`,
+                  height: '100%',
+                  background: profileCompletion.percentage >= 80 
+                    ? 'linear-gradient(90deg, #10b981, #059669)' 
+                    : profileCompletion.percentage >= 50 
+                    ? 'linear-gradient(90deg, #fbbf24, #f59e0b)'
+                    : 'linear-gradient(90deg, #f59e0b, #dc2626)',
+                  transition: 'width 0.5s ease',
+                  borderRadius: '6px'
+                }} />
+              </div>
+
+              {/* Missing Fields */}
+              <div style={{ fontSize: '13px', color: '#6b7280' }}>
+                <strong>Campos faltantes ({profileCompletion.total - profileCompletion.completed}):</strong>{' '}
+                {profileCompletion.missingFields.length > 0 ? (
+                  profileCompletion.missingFields.map((field, index) => {
+                    const fieldNames: Record<string, string> = {
+                      name: 'Nome',
+                      email: 'Email',
+                      institution: 'Instituição',
+                      academicDegree: 'Grau Acadêmico',
+                      fieldOfStudy: 'Área de Estudo',
+                      professionalRole: 'Função Profissional',
+                      researchArea: 'Área de Pesquisa',
+                      englishProficiency: 'Proficiência em Inglês',
+                      ehealsScore: 'Questionário eHEALS'
+                    };
+                    return (
+                      <span key={field}>
+                        {fieldNames[field] || field}
+                        {index < profileCompletion.missingFields.length - 1 ? ', ' : ''}
+                      </span>
+                    );
+                  })
+                ) : (
+                  'Nenhum - Perfil completo! 🎉'
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Completion Success Message */}
+          {profileCompletion.isComplete && (
+            <div style={{
+              backgroundColor: '#dcfce7',
+              borderRadius: '12px',
+              padding: '20px',
+              marginTop: '20px',
+              border: '2px solid #10b981',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '15px'
+            }}>
+              <div style={{ fontSize: '36px' }}>✅</div>
+              <div style={{ flex: 1 }}>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#15803d' }}>
+                  Perfil 100% Completo!
+                </h3>
+                <p style={{ margin: '5px 0 0 0', fontSize: '14px', color: '#166534' }}>
+                  Parabéns! Você ganhou <strong>+{PROFILE_COMPLETION_POINTS} pontos</strong> por completar seu perfil.
+                </p>
+              </div>
+              <div style={{ fontSize: '48px' }}>🏆</div>
+            </div>
+          )}
           
           <div style={{
             backgroundColor: 'white',
