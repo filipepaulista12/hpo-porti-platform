@@ -5,8 +5,19 @@
 
 import { spawn, ChildProcess } from 'child_process';
 import { createServer } from 'net';
-import { writeFileSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import * as dotenv from 'dotenv';
+
+// Carregar .env.test
+const testEnvPath = join(__dirname, '../../.env.test');
+if (existsSync(testEnvPath)) {
+  const envConfig = dotenv.parse(readFileSync(testEnvPath));
+  Object.keys(envConfig).forEach(key => {
+    process.env[key] = envConfig[key];
+  });
+  console.log('✅ .env.test carregado com sucesso');
+}
 
 let serverProcess: ChildProcess | null = null;
 
@@ -99,8 +110,9 @@ export default async function globalSetup() {
   serverProcess = spawn(command, ['run', 'dev'], {
     env: {
       ...process.env,
-      NODE_ENV: 'development',
+      NODE_ENV: 'test',
       PORT: serverPort.toString(),
+      RATE_LIMIT_MAX_REQUESTS: '10000',
     },
     stdio: 'pipe',
     shell: true,

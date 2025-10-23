@@ -482,4 +482,85 @@ router.put('/profile/professional', authenticate, async (req: AuthRequest, res, 
   }
 });
 
+// PATCH /api/users/profile - Update user CPLP preferences (Sprint 2.0)
+router.patch('/profile', authenticate, async (req: AuthRequest, res, next) => {
+  try {
+    const userId = req.user?.id;
+    
+    if (!userId) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    // Get current user data
+    const currentUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        nativeVariant: true,
+        secondaryVariants: true
+      }
+    });
+
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const {
+      countryCode,
+      nativeVariant,
+      secondaryVariants,
+      preferredVariants,
+      countriesOfInterest
+    } = req.body;
+
+    // Validate countryCode if provided
+    const validCountryCodes = ['BR', 'PT', 'AO', 'MZ', 'GW', 'CV', 'ST', 'TL', 'GQ'];
+    if (countryCode && !validCountryCodes.includes(countryCode)) {
+      return res.status(400).json({
+        error: 'Invalid country code'
+      });
+    }
+
+    // Validate secondaryVariants doesn't include nativeVariant
+    const finalNativeVariant = nativeVariant !== undefined ? nativeVariant : currentUser.nativeVariant;
+    const finalSecondaryVariants = secondaryVariants !== undefined ? secondaryVariants : currentUser.secondaryVariants;
+
+    if (finalNativeVariant && finalSecondaryVariants?.includes(finalNativeVariant)) {
+      return res.status(400).json({
+        error: 'Secondary variants cannot include native variant'
+      });
+    }
+
+    // Auto-fill preferredVariants if not provided: combine native + secondary
+    const autoPreferredVariants = preferredVariants || [
+      ...(finalNativeVariant ? [finalNativeVariant] : []),
+      ...(finalSecondaryVariants || [])
+    ].filter(Boolean);
+
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        countryCode: countryCode !== undefined ? countryCode : undefined,
+        nativeVariant: nativeVariant !== undefined ? nativeVariant : undefined,
+        secondaryVariants: secondaryVariants !== undefined ? secondaryVariants : undefined,
+        preferredVariants: autoPreferredVariants,
+        countriesOfInterest: countriesOfInterest !== undefined ? countriesOfInterest : undefined
+      },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        countryCode: true,
+        nativeVariant: true,
+        secondaryVariants: true,
+        preferredVariants: true,
+        countriesOfInterest: true
+      }
+    });
+
+    res.json(updatedUser);
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;

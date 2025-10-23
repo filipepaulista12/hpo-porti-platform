@@ -32,20 +32,38 @@ Sistema completo de tradução colaborativa do HPO (Human Phenotype Ontology) co
 
 ### 🚀 Para Deploy---
 
-| Guia | Descrição |
+## 📁 Estrutura do Projeto
 
-|------|-----------|## 🚀 Quick Start
+```
+hpo_translation/
+├── hpo-platform-backend/      # Backend (Node.js + Express + Prisma)
+├── plataforma-raras-cpl/      # Frontend (React + TypeScript + Vite)
+├── hpo-translations-data/     # HPO ontology data files
+│
+├── docs/                      # 📚 Documentação completa
+│   ├── features/             # Features implementadas (Sprints)
+│   ├── testing/              # Guias de testes
+│   ├── research/             # Papers acadêmicos
+│   └── archive/              # Relatórios históricos
+│
+├── scripts/                   # 📝 Scripts auxiliares
+│   ├── database/             # PostgreSQL, migrations
+│   ├── deploy/               # Deploy e PM2
+│   └── server/               # SSH, ORCID tests
+│
+├── README.md                  # Este arquivo
+├── QUICK_START.md             # Guia rápido de 10 minutos
+└── START.bat                  # Atalho Windows (frontend + backend)
+```
 
-| [Deployment Guide](docs/deployment/DEPLOY_GUIDE.md) | Deploy completo em produção |
+---
 
-| [Guia Apache + PM2](docs/GUIA_DEPLOY_APACHE_PM2.md) | Configurar reverse proxy |### Pré-requisitos
+## 🚀 Quick Start
 
-| [ORCID Setup](docs/setup/ORCID_SETUP.md) | Autenticação ORCID |
+### Pré-requisitos
 
-| [DNS Hostinger](docs/GUIA_DNS_HOSTINGER.md) | Configurar domínio |- Node.js 18+ ([Download](https://nodejs.org/))
-
-| [Email SMTP](docs/EMAIL_SMTP_SUCESSO.md) | Configurar envio de emails |- Docker Desktop ([Download](https://www.docker.com/products/docker-desktop))
-
+- Node.js 18+ ([Download](https://nodejs.org/))
+- Docker Desktop ([Download](https://www.docker.com/products/docker-desktop))
 - Git ([Download](https://git-scm.com/))
 
 ### 📖 Para Usuários

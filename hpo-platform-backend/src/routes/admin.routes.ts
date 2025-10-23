@@ -1038,9 +1038,8 @@ router.get('/users/:id/stats', async (req: AuthRequest, res, next) => {
     ] = await Promise.all([
       prisma.translation.count({ where: { userId: id } }),
       prisma.translation.count({ where: { userId: id, status: 'APPROVED' } }),
-      prisma.validation.count({ where: { userId: id } }),
-      // Will work after migration: prisma.referral.count({ where: { referrerId: id, status: 'ACCEPTED' } })
-      0 // Temporary placeholder
+      prisma.validation.count({ where: { validatorId: id } }),
+      prisma.referral.count({ where: { referrerId: id, status: 'ACCEPTED' } })
     ]);
 
     const approvalRate = translations > 0 ? Math.round((approved / translations) * 100) : 0;
@@ -1133,6 +1132,7 @@ router.put('/users/:id/role', requireRole('ADMIN' as any), async (req: AuthReque
       data: {
         adminId: req.user!.id,
         action: 'CHANGE_USER_ROLE',
+        targetType: 'User',
         targetId: id,
         metadata: {
           oldRole: req.user!.role,
@@ -1196,6 +1196,7 @@ router.put('/users/:id/status', requireRole('MODERATOR' as any), async (req: Aut
       data: {
         adminId: req.user!.id,
         action: isActive ? 'ACTIVATE_USER' : 'DEACTIVATE_USER',
+        targetType: 'User',
         targetId: id,
         metadata: {
           reason: reason || 'No reason provided',
@@ -1258,7 +1259,8 @@ router.post('/users/bulk-action', requireRole('MODERATOR' as any), async (req: A
     await prisma.adminAuditLog.create({
       data: {
         adminId: req.user!.id,
-        action: `BULK_${isActive ? 'ACTIVATE' : 'DEACTIVATE'}`,
+        action: `BULK_${isActive ? 'ACTIVATE' : 'DEACTIVATE'}` as any,
+        targetType: 'User',
         targetId: 'multiple',
         metadata: {
           userIds,
@@ -1369,6 +1371,7 @@ router.get('/users/export', async (req: AuthRequest, res, next) => {
       data: {
         adminId: req.user!.id,
         action: 'EXPORT_USERS',
+        targetType: 'User',
         targetId: 'csv',
         metadata: {
           totalUsers: users.length,

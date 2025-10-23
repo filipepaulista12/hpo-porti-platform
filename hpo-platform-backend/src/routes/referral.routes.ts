@@ -436,7 +436,7 @@ router.post('/accept/:code', async (req: Request, res: Response) => {
  * Internal function: Mark referral as fully accepted after first contribution
  * Called from translation.routes.ts when user makes first contribution
  */
-export async function completeReferral(userId: number): Promise<void> {
+export async function completeReferral(userId: string): Promise<void> {
   try {
     // Find referral where this user is the referee and status is REGISTERED
     const referral = await prisma.referral.findFirst({

@@ -42,8 +42,8 @@ describe('💾 Database Persistence Tests', () => {
   // ==============================================
   describe('Translation Persistence', () => {
     it('should create translation and persist to database', async () => {
-      // Buscar um termo disponível
-      const searchResponse = await fetch(`${API_URL}/api/hpo-terms/search?status=NOT_TRANSLATED&limit=1`, {
+      // Buscar um termo disponível (qualquer status, pois outros testes podem ter mudado o status)
+      const searchResponse = await fetch(`${API_URL}/api/hpo-terms/search?limit=1`, {
         headers: { 'Authorization': `Bearer ${authToken}` }
       });
       

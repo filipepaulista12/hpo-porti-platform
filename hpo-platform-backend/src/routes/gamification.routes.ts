@@ -415,7 +415,7 @@ router.post('/award-profile-completion', authenticate, async (req: Request, res:
  */
 router.get('/my-stats', authenticate, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const userId = (req as any).user?.id;
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -447,9 +447,9 @@ router.get('/my-stats', authenticate, async (req: Request, res: Response) => {
       }
     });
 
-    // Count reviews
-    const reviewsCount = await prisma.review.count({
-      where: { userId }
+    // Count validations (reviews)
+    const reviewsCount = await prisma.validation.count({
+      where: { validatorId: userId }
     });
 
     // Count referrals

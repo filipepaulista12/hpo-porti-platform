@@ -44,7 +44,14 @@ router.get('/', async (req: AuthRequest, res, next) => {
     const where: any = {};
 
     if (status && typeof status === 'string') {
-      where.status = status;
+      // Validate status against ConflictStatus enum
+      const validStatuses = ['PENDING_COMMITTEE', 'IN_VOTING', 'RESOLVED', 'ESCALATED'];
+      if (validStatuses.includes(status)) {
+        where.status = status;
+      } else {
+        // Invalid status, use default
+        where.status = { in: ['PENDING_COMMITTEE', 'IN_VOTING'] };
+      }
     } else {
       // Default: only show pending/in-voting conflicts
       where.status = { in: ['PENDING_COMMITTEE', 'IN_VOTING'] };

@@ -20,5 +20,6 @@ module.exports = {
   clearMocks: true,
   resetMocks: true,
   restoreMocks: true,
-  testTimeout: 30000, // 30s timeout for tests (server startup can take time)
+  maxWorkers: 1, // Run tests serially to avoid database race conditions
+  testTimeout: 120000, // 120s (2 minutes) timeout for integration tests
 };

@@ -17,7 +17,12 @@ const translationSchemaBase = z.object({
   confidence: z.number().min(1).max(5).optional().default(3),
   comments: z.string().optional(),
   notes: z.string().optional(), // ALIAS for comments
-  language: z.string().optional() // Ignored but accepted
+  language: z.string().optional(), // Ignored but accepted
+  // CPLP Variants (Sprint 2.0)
+  variant: z.enum([
+    'PT_BR', 'PT_PT', 'PT_AO', 'PT_MZ', 'PT_GW', 'PT_CV', 'PT_ST', 'PT_TL', 'PT_GQ'
+  ]).optional().default('PT_BR'),
+  linguisticNotes: z.string().optional()
 });
 
 // Full schema with required field checks (for POST)
@@ -84,20 +89,31 @@ router.post('/', authenticate, async (req: AuthRequest, res, next) => {
     // Use the term's actual UUID for database operations
     actualTermId = term.id;
     
-    // Check for duplicate translation (same user + same term)
+    // Get user data for variant detection
+    const userData = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { nativeVariant: true }
+    });
+    
+    // CPLP Sprint 2.0: Check for duplicate translation (same user + same term + same variant)
+    const translationVariant = data.variant || 'PT_BR';
     const existingTranslation = await prisma.translation.findFirst({
       where: {
         userId: req.user.id,
-        termId: actualTermId
+        termId: actualTermId,
+        variant: translationVariant
       }
     });
     
     if (existingTranslation) {
       return res.status(400).json({
         error: 'Duplicate translation',
-        message: 'You have already created a translation for this term'
+        message: `You have already created a ${translationVariant} translation for this term`
       });
     }
+    
+    // Detect if this is a native translation
+    const isNativeTranslation = userData?.nativeVariant === translationVariant;
     
     // Create translation
     const translation = await prisma.translation.create({
@@ -110,7 +126,11 @@ router.post('/', authenticate, async (req: AuthRequest, res, next) => {
         notes: actualComments, // Save notes field
         confidence: data.confidence || 3,
         status: 'PENDING_REVIEW',
-        source: 'MANUAL'
+        source: 'MANUAL',
+        // CPLP Sprint 2.0
+        variant: translationVariant,
+        linguisticNotes: data.linguisticNotes,
+        isNativeTranslation
       },
       include: {
         user: {
@@ -118,7 +138,8 @@ router.post('/', authenticate, async (req: AuthRequest, res, next) => {
             id: true,
             name: true,
             email: true,
-            specialty: true
+            specialty: true,
+            nativeVariant: true
           }
         }
       }

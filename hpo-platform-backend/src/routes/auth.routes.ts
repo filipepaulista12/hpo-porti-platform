@@ -25,7 +25,19 @@ const registerSchema = z.object({
     .min(2, { message: 'Name must be at least 2 characters' }),
   institution: z.string().optional(),
   specialty: z.string().optional(),
-  country: z.string().optional()
+  country: z.string().optional(),
+  // CPLP Variants (Sprint 2.0)
+  countryCode: z.string().optional(),
+  nativeVariant: z.enum([
+    'PT_BR', 'PT_PT', 'PT_AO', 'PT_MZ', 'PT_GW', 'PT_CV', 'PT_ST', 'PT_TL', 'PT_GQ'
+  ]).optional(),
+  secondaryVariants: z.array(z.enum([
+    'PT_BR', 'PT_PT', 'PT_AO', 'PT_MZ', 'PT_GW', 'PT_CV', 'PT_ST', 'PT_TL', 'PT_GQ'
+  ])).optional(),
+  preferredVariants: z.array(z.enum([
+    'PT_BR', 'PT_PT', 'PT_AO', 'PT_MZ', 'PT_GW', 'PT_CV', 'PT_ST', 'PT_TL', 'PT_GQ'
+  ])).optional(),
+  countriesOfInterest: z.array(z.string()).optional()
 });
 
 const loginSchema = z.object({
@@ -66,6 +78,23 @@ router.post('/register', async (req, res, next) => {
     
     const data = validation.data;
     
+    // CPLP Sprint 2.0: Validate countryCode if provided
+    const validCountryCodes = ['BR', 'PT', 'AO', 'MZ', 'GW', 'CV', 'ST', 'TL', 'GQ'];
+    if (data.countryCode && !validCountryCodes.includes(data.countryCode)) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: [{ field: 'countryCode', message: 'Invalid CPLP country code' }]
+      });
+    }
+    
+    // CPLP Sprint 2.0: Validate secondaryVariants doesn't include nativeVariant
+    if (data.nativeVariant && data.secondaryVariants?.includes(data.nativeVariant)) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: [{ field: 'secondaryVariants', message: 'Secondary variants cannot include native variant' }]
+      });
+    }
+    
     // Check if user exists
     const existingUser = await prisma.user.findUnique({
       where: { email: data.email }
@@ -78,6 +107,12 @@ router.post('/register', async (req, res, next) => {
     // Hash password
     const hashedPassword = await bcrypt.hash(data.password, 10);
     
+    // CPLP Sprint 2.0: Auto-fill preferredVariants from native + secondary
+    const autoPreferredVariants = data.preferredVariants || [
+      ...(data.nativeVariant ? [data.nativeVariant] : []),
+      ...(data.secondaryVariants || [])
+    ].filter(Boolean);
+    
     // Create user
     const user = await prisma.user.create({
       data: {
@@ -87,6 +122,12 @@ router.post('/register', async (req, res, next) => {
         institution: data.institution,
         specialty: data.specialty,
         country: data.country,
+        // CPLP Variants (Sprint 2.0)
+        countryCode: data.countryCode,
+        nativeVariant: data.nativeVariant,
+        secondaryVariants: data.secondaryVariants || [],
+        preferredVariants: autoPreferredVariants,
+        countriesOfInterest: data.countriesOfInterest || [],
         role: 'TRANSLATOR'
       },
       select: {
@@ -95,7 +136,11 @@ router.post('/register', async (req, res, next) => {
         name: true,
         role: true,
         points: true,
-        level: true
+        level: true,
+        countryCode: true,
+        nativeVariant: true,
+        secondaryVariants: true,
+        preferredVariants: true
       }
     });
     
@@ -115,7 +160,17 @@ router.post('/register', async (req, res, next) => {
 // POST /api/auth/login
 router.post('/login', async (req, res, next) => {
   try {
-    const data = loginSchema.parse(req.body);
+    // Validate input with safeParse to return 400 on validation errors
+    const result = loginSchema.safeParse(req.body);
+    
+    if (!result.success) {
+      return res.status(400).json({ 
+        error: 'Validation failed', 
+        details: result.error.flatten() 
+      });
+    }
+    
+    const data = result.data;
     
     // Find user
     const user = await prisma.user.findUnique({
@@ -239,12 +294,12 @@ router.get('/orcid', (req, res) => {
     });
   }
 
-  // Build authorization URL
+  // Build authorization URL (DON'T encode redirect_uri - ORCID will handle it)
   const authUrl = `${orcidBaseUrl}/oauth/authorize?` + 
     `client_id=${clientId}&` +
     `response_type=${responseType}&` +
     `scope=${scope}&` +
-    `redirect_uri=${encodeURIComponent(redirectUri)}`;
+    `redirect_uri=${redirectUri}`;
 
   res.json({ 
     authUrl,
@@ -405,6 +460,12 @@ router.get('/me', authenticate, async (req: AuthRequest, res: Response, next) =>
         orcidId: true,
         isActive: true,
         createdAt: true,
+        // CPLP Sprint 2.0: Include CPLP fields
+        countryCode: true,
+        nativeVariant: true,
+        secondaryVariants: true,
+        preferredVariants: true,
+        countriesOfInterest: true,
         _count: {
           select: {
             translations: true,
@@ -435,6 +496,12 @@ router.get('/me', authenticate, async (req: AuthRequest, res: Response, next) =>
       orcidId: user.orcidId,
       isActive: user.isActive,
       createdAt: user.createdAt,
+      // CPLP Sprint 2.0: Include CPLP fields in response
+      countryCode: user.countryCode,
+      nativeVariant: user.nativeVariant,
+      secondaryVariants: user.secondaryVariants,
+      preferredVariants: user.preferredVariants,
+      countriesOfInterest: user.countriesOfInterest,
       stats: {
         translationsCount: user._count.translations,
         validationsCount: user._count.validations,
@@ -469,7 +536,8 @@ router.get('/linkedin', (req, res) => {
   // Store state in session (or you can use Redis for production)
   // For simplicity, we'll validate it in the callback using a simple approach
   
-  const scope = 'r_liteprofile r_emailaddress'; // Permissions needed
+  // LinkedIn API v2 scopes (updated 2025 - r_emailaddress is deprecated)
+  const scope = 'profile email openid'; // New scopes for LinkedIn API v2
   
   const authUrl = `https://www.linkedin.com/oauth/v2/authorization?` +
     `response_type=code` +
@@ -540,29 +608,29 @@ router.get('/linkedin/callback', async (req, res, next) => {
     // Fetch user profile from LinkedIn
     logger.info('Fetching LinkedIn profile');
     
+    // LinkedIn API v2 - Updated endpoints (2025)
     const [profileResponse, emailResponse] = await Promise.all([
-      axios.get('https://api.linkedin.com/v2/me', {
+      axios.get('https://api.linkedin.com/v2/userinfo', {
         headers: { Authorization: `Bearer ${accessToken}` }
       }),
-      axios.get('https://api.linkedin.com/v2/emailAddress?q=members&projection=(elements*(handle~))', {
+      axios.get('https://api.linkedin.com/v2/userinfo', {
         headers: { Authorization: `Bearer ${accessToken}` }
       })
     ]);
     
     const profile = profileResponse.data;
-    const emailData = emailResponse.data;
     
-    // Extract email
-    const email = emailData.elements?.[0]?.['handle~']?.emailAddress;
+    // Extract email from userinfo endpoint (new API)
+    const email = profile.email;
     
     if (!email) {
       throw new AppError('Could not retrieve email from LinkedIn', 400);
     }
     
-    // Extract profile data
-    const firstName = profile.localizedFirstName || '';
-    const lastName = profile.localizedLastName || '';
-    const linkedinId = profile.id;
+    // Extract profile data (new API structure)
+    const firstName = profile.given_name || '';
+    const lastName = profile.family_name || '';
+    const linkedinId = profile.sub; // LinkedIn user ID
     
     logger.info('LinkedIn profile retrieved', { email, linkedinId });
     
@@ -609,9 +677,9 @@ router.get('/linkedin/callback', async (req, res, next) => {
     // Generate JWT token
     const token = generateToken(user.id, user.email, user.role);
     
-    // Redirect to frontend with token
+    // Redirect to frontend root with token (frontend will handle in useEffect)
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    res.redirect(`${frontendUrl}/auth/callback?token=${token}&provider=linkedin`);
+    res.redirect(`${frontendUrl}/?token=${token}&provider=linkedin`);
     
   } catch (error) {
     logger.error('LinkedIn OAuth callback error', { error });

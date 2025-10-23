@@ -25,6 +25,10 @@ describe('Authentication API', () => {
       });
 
       const data = await response.json() as any;
+      
+      if (response.status === 500) {
+        console.log('ERRO 500 DETAILS:', JSON.stringify(data, null, 2));
+      }
 
       expect(response.status).toBe(201);
       expect(data.token).toBeDefined();

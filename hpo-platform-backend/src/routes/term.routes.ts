@@ -50,19 +50,23 @@ const searchTermsHandler = async (req: AuthRequest, res: any, next: any) => {
       where.difficulty = parseInt(queryData.difficulty);
     }
     
-    // Get terms with pagination
+    // Get terms with pagination - OPTIMIZED for performance
     const [terms, total] = await Promise.all([
       prisma.hpoTerm.findMany({
         where,
         skip,
         take: limit,
         orderBy: { hpoId: 'asc' },
-        include: {
-          translations: {
-            where: { status: 'APPROVED' },
-            take: 1,
-            orderBy: { approvedAt: 'desc' }
-          },
+        select: {
+          id: true,
+          hpoId: true,
+          labelEn: true,
+          definitionEn: true,
+          category: true,
+          difficulty: true,
+          translationStatus: true,
+          synonymsEn: true,
+          // Only get count, not the actual translations (much faster)
           _count: {
             select: { translations: true }
           }

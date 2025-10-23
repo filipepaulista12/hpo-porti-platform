@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import ToastService from './services/toast.service';
@@ -9,10 +9,21 @@ import InteractiveTour from './components/InteractiveTour';
 import UnauthorizedAccess from './components/UnauthorizedAccess';
 import { EhealsModal } from './components/EhealsModal';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
+import { TranslationModal } from './components/TranslationModal';
 import RecommendedTerms from './components/RecommendedTerms';
 import { Tooltip as ReactTooltip } from 'react-tooltip';
 import 'react-tooltip/dist/react-tooltip.css';
 import './styles/accessibility.css';
+import { 
+  getCPLPCountriesArray, 
+  getVariantByCountry, 
+  formatVariantDisplay,
+  getAllVariants,
+  getVariantFlag,
+  getCountryFlag
+} from './utils/cplp-variants';
+import { VariantProgressDashboard } from './components/VariantProgressDashboard';
+import { CountryRankingPage } from './components/CountryRankingPage';
 
 // Configuração da API - Detecta ambiente automaticamente
 const API_BASE_URL = window.location.hostname === 'localhost' 
@@ -200,13 +211,17 @@ function ProductionHPOApp() {
   const [user, setUser] = useState<User | null>(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(false); // Novo estado para controlar loading
   // Inicia em 'dashboard' se tiver token, senão 'home'
-  const [currentPage, setCurrentPage] = useState<'home' | 'login' | 'register' | 'dashboard' | 'translate' | 'review' | 'leaderboard' | 'history' | 'admin' | 'profile' | 'guidelines' | 'points' | 'referral'>(() => {
+  const [currentPage, setCurrentPage] = useState<'home' | 'login' | 'register' | 'dashboard' | 'translate' | 'review' | 'leaderboard' | 'history' | 'admin' | 'admin-users' | 'profile' | 'guidelines' | 'points' | 'referral' | 'variant-progress' | 'country-ranking'>(() => {
     const token = TokenStorage.get();
     return (token && !TokenStorage.isExpired()) ? 'dashboard' : 'home';
   });
   const [selectedTerm, setSelectedTerm] = useState<HPOTerm | null>(null);
   const [translation, setTranslation] = useState('');
   const [confidence, setConfidence] = useState(3);
+  // CPLP Sprint 2.0: Variant selection
+  const [selectedVariant, setSelectedVariant] = useState<'PT_BR' | 'PT_PT' | 'PT_AO' | 'PT_MZ' | 'PT_GW' | 'PT_CV' | 'PT_ST' | 'PT_TL' | 'PT_GQ'>('PT_BR');
+  const [linguisticNotes, setLinguisticNotes] = useState('');
+  const [existingTranslations, setExistingTranslations] = useState<any[]>([]);
   const [terms, setTerms] = useState<HPOTerm[]>([]);
   const [loading, setLoading] = useState(false);
   const [stats, setStats] = useState<APIResponse | null>(null);
@@ -252,9 +267,20 @@ function ProductionHPOApp() {
     message: '',
     onConfirm: () => {},
   });
+  
+  // Translation Modal State (FIX for scroll issue)
+  const [showTranslationModal, setShowTranslationModal] = useState(false);
 
   // Ref para controlar se o histórico já foi carregado (evitar loop)
   const historyLoadedRef = useRef(false);
+  
+  // Refs para controlar carregamento único de termos e traduções pendentes
+  const termsLoadedRef = useRef(false);
+  const reviewLoadedRef = useRef(false);
+  
+  // Prevent simultaneous API calls (performance optimization)
+  const isLoadingTermsRef = useRef(false);
+  const isLoadingCategoriesRef = useRef(false);
   
   // Task #4: History Page Tabs
   const [historyTab, setHistoryTab] = useState<'ALL' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED'>('ALL');
@@ -383,6 +409,17 @@ function ProductionHPOApp() {
       return () => clearInterval(timer);
     }
   }, [isRateLimited, rateLimitRetryAfter]);
+
+  // Reset refs quando mudar de página (prevenir loops)
+  useEffect(() => {
+    console.log('[PAGE CHANGE] Página mudou para:', currentPage);
+    if (currentPage !== 'translate') {
+      termsLoadedRef.current = false;
+    }
+    if (currentPage !== 'review') {
+      reviewLoadedRef.current = false;
+    }
+  }, [currentPage]);
 
   // Verificar autenticação ao carregar
   useEffect(() => {
@@ -570,13 +607,20 @@ function ProductionHPOApp() {
   };
 
   const loadTerms = async (page: number = 1, search?: string, category?: string, status?: string, difficulty?: string) => {
+    // Prevent simultaneous calls
+    if (isLoadingTermsRef.current) {
+      console.log('[PERF] Blocking simultaneous loadTerms call');
+      return;
+    }
+    
+    isLoadingTermsRef.current = true;
     setLoading(true);
     setError(null);
     
     try {
       const params = new URLSearchParams({
         page: page.toString(),
-        limit: '20'
+        limit: '15'  // REDUZIDO DE 20 PARA 15 - PERFORMANCE FIX
       });
 
       if (search) params.append('search', search);
@@ -602,10 +646,19 @@ function ProductionHPOApp() {
       setError('Não foi possível carregar os termos. Tente novamente.');
     } finally {
       setLoading(false);
+      isLoadingTermsRef.current = false;
     }
   };
 
   const loadCategories = async () => {
+    // Prevent simultaneous calls
+    if (isLoadingCategoriesRef.current) {
+      console.log('[PERF] Blocking simultaneous loadCategories call');
+      return;
+    }
+    
+    isLoadingCategoriesRef.current = true;
+    
     try {
       const response = await fetch(`${API_BASE_URL}/api/terms/categories`, {
         headers: TokenStorage.getAuthHeader()
@@ -618,6 +671,8 @@ function ProductionHPOApp() {
       }
     } catch (error) {
       console.warn('⚠️ Erro ao carregar categorias:', error);
+    } finally {
+      isLoadingCategoriesRef.current = false;
     }
   };
 
@@ -914,8 +969,13 @@ function ProductionHPOApp() {
     }
   };
 
-  const submitTranslation = async () => {
-    if (!selectedTerm || !translation.trim()) return;
+  const submitTranslation = async (
+    translationText: string,
+    notes: string,
+    confidenceLevel: number,
+    variant: string
+  ) => {
+    if (!selectedTerm || !translationText.trim()) return;
     if (isRateLimited) {
       ToastService.warning(`Aguarde ${rateLimitRetryAfter} segundos antes de enviar outra tradução.`);
       return;
@@ -933,8 +993,11 @@ function ProductionHPOApp() {
         },
         body: JSON.stringify({
           termId: selectedTerm.id,
-          labelPt: translation,
-          confidence: confidence
+          labelPt: translationText,
+          confidence: confidenceLevel,
+          // CPLP Sprint 2.0
+          variant: variant,
+          linguisticNotes: notes || undefined
         })
       });
 
@@ -956,7 +1019,9 @@ function ProductionHPOApp() {
 
         // Limpar formulário
         setTranslation('');
+        setLinguisticNotes(''); // CPLP Sprint 2.0
         setSelectedTerm(null);
+        setExistingTranslations([]); // CPLP Sprint 2.0
         
         // Remover termo da lista
         setTerms(prev => prev.filter(t => t.id !== selectedTerm.id));
@@ -977,6 +1042,48 @@ function ProductionHPOApp() {
     }
   };
 
+  // CPLP Sprint 2.0: Load existing translations with CACHE to prevent freeze
+  const translationsCache = React.useRef<Record<string, any[]>>({});
+  const loadingTranslationsRef = React.useRef<Set<string>>(new Set()); // Track loading requests
+  
+  const loadExistingTranslations = async (termId: string) => {
+    // Check cache first - PERFORMANCE FIX
+    if (translationsCache.current[termId]) {
+      console.log('[TRANSLATE] Using cached translations for', termId);
+      setExistingTranslations(translationsCache.current[termId]);
+      return;
+    }
+
+    // Prevent duplicate requests for same termId
+    if (loadingTranslationsRef.current.has(termId)) {
+      console.log('[TRANSLATE] Already loading translations for', termId, '- skipping');
+      return;
+    }
+
+    loadingTranslationsRef.current.add(termId);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/translations/term/${termId}`, {
+        headers: TokenStorage.getAuthHeader()
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        const translations = data.translations || [];
+        
+        // Cache the result - PERFORMANCE FIX
+        translationsCache.current[termId] = translations;
+        setExistingTranslations(translations);
+        
+        console.log('[TRANSLATE] Loaded and cached', translations.length, 'translations for', termId);
+      }
+    } catch (error) {
+      console.error('Error loading existing translations:', error);
+    } finally {
+      loadingTranslationsRef.current.delete(termId);
+    }
+  };
+
   // ============================================
   // COMPONENTE DE REGISTRO
   // ============================================
@@ -985,7 +1092,11 @@ function ProductionHPOApp() {
       name: '',
       email: '',
       password: '',
-      confirmPassword: ''
+      confirmPassword: '',
+      // CPLP Variants (Sprint 2.0)
+      countryCode: '',
+      nativeVariant: '' as '' | 'PT_BR' | 'PT_PT' | 'PT_AO' | 'PT_MZ' | 'PT_GW' | 'PT_CV' | 'PT_ST' | 'PT_TL' | 'PT_GQ',
+      secondaryVariants: [] as string[]
     });
     const [registerLoading, setRegisterLoading] = useState(false);
 
@@ -1012,7 +1123,12 @@ function ProductionHPOApp() {
           body: JSON.stringify({
             name: formData.name,
             email: formData.email,
-            password: formData.password
+            password: formData.password,
+            // CPLP Variants (Sprint 2.0)
+            countryCode: formData.countryCode || undefined,
+            nativeVariant: formData.nativeVariant || undefined,
+            secondaryVariants: formData.secondaryVariants.length > 0 ? formData.secondaryVariants : undefined,
+            preferredVariants: formData.nativeVariant ? [formData.nativeVariant, ...formData.secondaryVariants] : undefined
           })
         });
 
@@ -1160,6 +1276,132 @@ function ProductionHPOApp() {
                 placeholder="seu@email.com"
               />
             </div>
+
+            {/* CPLP Sprint 2.0: País de Origem */}
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500', fontSize: '14px' }}>
+                🌍 País de Origem (Opcional):
+              </label>
+              <select
+                value={formData.countryCode}
+                onChange={(e) => {
+                  const country = e.target.value;
+                  const variant = getVariantByCountry(country);
+                  setFormData({
+                    ...formData, 
+                    countryCode: country,
+                    nativeVariant: variant || formData.nativeVariant
+                  });
+                }}
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  boxSizing: 'border-box',
+                  fontSize: '14px',
+                  backgroundColor: 'white'
+                }}
+              >
+                <option value="">Selecione seu país...</option>
+                {getCPLPCountriesArray().map(country => (
+                  <option key={country.code} value={country.code}>
+                    {country.flag} {country.name}
+                  </option>
+                ))}
+              </select>
+              <p style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px', marginBottom: 0 }}>
+                Isso nos ajuda a entender melhor a comunidade CPLP
+              </p>
+            </div>
+
+            {/* CPLP Sprint 2.0: Variante Nativa */}
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500', fontSize: '14px' }}>
+                🗣️ Variante do Português que você domina (Opcional):
+              </label>
+              <select
+                value={formData.nativeVariant}
+                onChange={(e) => setFormData({...formData, nativeVariant: e.target.value as any})}
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  boxSizing: 'border-box',
+                  fontSize: '14px',
+                  backgroundColor: 'white'
+                }}
+              >
+                <option value="">Selecione sua variante nativa...</option>
+                {getAllVariants().map(variant => (
+                  <option key={variant} value={variant}>
+                    {formatVariantDisplay(variant)}
+                  </option>
+                ))}
+              </select>
+              <p style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px', marginBottom: 0 }}>
+                Suas traduções nesta variante serão marcadas como "nativas" 🏅
+              </p>
+            </div>
+
+            {/* CPLP Sprint 2.0: Variantes Secundárias */}
+            {formData.nativeVariant && (
+              <div style={{ marginBottom: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500', fontSize: '14px' }}>
+                  ➕ Outras variantes que você conhece (Opcional):
+                </label>
+                <div style={{
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  padding: '10px',
+                  maxHeight: '150px',
+                  overflowY: 'auto',
+                  backgroundColor: '#f9fafb'
+                }}>
+                  {getAllVariants()
+                    .filter(v => v !== formData.nativeVariant)
+                    .map(variant => (
+                      <label
+                        key={variant}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          padding: '6px',
+                          cursor: 'pointer',
+                          borderRadius: '4px',
+                          fontSize: '13px'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#e5e7eb'}
+                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={formData.secondaryVariants.includes(variant)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setFormData({
+                                ...formData,
+                                secondaryVariants: [...formData.secondaryVariants, variant]
+                              });
+                            } else {
+                              setFormData({
+                                ...formData,
+                                secondaryVariants: formData.secondaryVariants.filter(v => v !== variant)
+                              });
+                            }
+                          }}
+                          style={{ marginRight: '8px' }}
+                        />
+                        {formatVariantDisplay(variant)}
+                      </label>
+                    ))}
+                </div>
+                <p style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px', marginBottom: 0 }}>
+                  Você poderá traduzir para essas variantes também
+                </p>
+              </div>
+            )}
 
             <div style={{ marginBottom: '15px' }}>
               <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500', fontSize: '14px' }}>
@@ -1590,7 +1832,6 @@ function ProductionHPOApp() {
               setSelectedTerm(term);
               setCurrentPage('translate');
             }}
-            userSpecialty={user?.specialty}
             userLevel={user?.level}
           />
         </div>
@@ -1778,13 +2019,28 @@ function ProductionHPOApp() {
   // ============================================
   // PÁGINA DE TRADUÇÃO
   // ============================================
+  
   const TranslatePage = () => {
+    // Mobile detection
+    const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+    React.useEffect(() => {
+      const handleResize = () => setIsMobile(window.innerWidth <= 768);
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
     useEffect(() => {
-      if (terms.length === 0) {
+      if (!termsLoadedRef.current) {
+        console.log('[TRANSLATE] Carregando termos pela primeira vez...');
+        termsLoadedRef.current = true;
         loadTerms(1);
         loadCategories();
       }
     }, []);
+
+    // CPLP Sprint 2.0: NO auto-loading - user must click button to load translations
+    // This prevents the freeze that happened when useEffect fired on every term click
 
     const handleSearch = () => {
       loadTerms(
@@ -1804,10 +2060,14 @@ function ProductionHPOApp() {
       loadTerms(1);
     };
 
-    const totalPages = Math.ceil(totalTerms / 20);
+    const totalPages = Math.ceil(totalTerms / 15);  // CHANGED: 15 items per page
 
     return (
-      <div className="translate-content" style={{ backgroundColor: '#f8fafc', minHeight: 'calc(100vh - 80px)', padding: '20px' }}>
+      <div className="translate-content" style={{ 
+        backgroundColor: '#f8fafc', 
+        minHeight: 'calc(100vh - 80px)', 
+        padding: isMobile ? '15px' : '20px'
+      }}>
         <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
           {/* Breadcrumbs */}
           <Breadcrumbs items={[
@@ -1817,16 +2077,16 @@ function ProductionHPOApp() {
 
           <div style={{
             backgroundColor: 'white',
-            padding: '20px',
+            padding: isMobile ? '15px' : '20px',
             borderRadius: '12px',
-            marginBottom: '20px',
+            marginBottom: isMobile ? '15px' : '20px',
             boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
           }}>
-            <h1 style={{ color: '#1e40af', margin: '0 0 10px 0' }}>
-              🔗 PORTI-HPO: Tradução Colaborativa
+            <h1 style={{ color: '#1e40af', margin: '0 0 10px 0', fontSize: isMobile ? '20px' : '32px' }}>
+              🔗 {isMobile ? 'PORTI-HPO' : 'PORTI-HPO: Tradução Colaborativa'}
             </h1>
-            <p style={{ color: '#64748b', margin: 0 }}>
-              Traduções de terminologia médica HPO para o português
+            <p style={{ color: '#64748b', margin: 0, fontSize: isMobile ? '13px' : '16px' }}>
+              {isMobile ? 'Traduções HPO para português' : 'Traduções de terminologia médica HPO para o português'}
             </p>
             {error && (
               <div style={{
@@ -1846,36 +2106,36 @@ function ProductionHPOApp() {
           {/* Search and Filters */}
           <div style={{
             backgroundColor: 'white',
-            padding: '20px',
+            padding: isMobile ? '15px' : '20px',
             borderRadius: '12px',
-            marginBottom: '20px',
+            marginBottom: isMobile ? '15px' : '20px',
             boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
           }}>
-            <h3 style={{ margin: '0 0 15px 0', color: '#374151', fontSize: '18px', fontWeight: '600' }}>
-              🔍 Buscar e Filtrar Termos
+            <h3 style={{ margin: '0 0 15px 0', color: '#374151', fontSize: isMobile ? '16px' : '18px', fontWeight: '600' }}>
+              🔍 {isMobile ? 'Buscar Termos' : 'Buscar e Filtrar Termos'}
             </h3>
             
             {/* Search Bar */}
             <div style={{ marginBottom: '15px' }}>
               <input
                 type="text"
-                placeholder="Buscar por HPO ID ou termo em inglês..."
+                placeholder={isMobile ? "🔍 HPO ID ou termo..." : "Buscar por HPO ID ou termo em inglês..."}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
                 style={{
                   width: '100%',
-                  padding: '12px',
+                  padding: isMobile ? '10px' : '12px',
                   border: '2px solid #e5e7eb',
                   borderRadius: '8px',
-                  fontSize: '14px',
+                  fontSize: isMobile ? '13px' : '14px',
                   boxSizing: 'border-box'
                 }}
               />
             </div>
 
             {/* Filters */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '15px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: '10px', marginBottom: '15px' }}>
               <select
                 value={filterCategory}
                 onChange={(e) => setFilterCategory(e.target.value)}
@@ -1931,13 +2191,14 @@ function ProductionHPOApp() {
             </div>
 
             {/* Buttons */}
-            <div style={{ display: 'flex', gap: '10px' }}>
+            <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: '10px' }}>
               <button
                 onClick={handleSearch}
                 disabled={loading}
                 style={{
                   flex: 1,
-                  padding: '10px',
+                  padding: isMobile ? '14px' : '10px',
+                  minHeight: isMobile ? '44px' : 'auto',
                   backgroundColor: loading ? '#9ca3af' : '#3b82f6',
                   color: 'white',
                   border: 'none',
@@ -1953,7 +2214,9 @@ function ProductionHPOApp() {
                 onClick={clearFilters}
                 disabled={loading}
                 style={{
-                  padding: '10px 20px',
+                  padding: isMobile ? '14px' : '10px 20px',
+                  minHeight: isMobile ? '44px' : 'auto',
+                  width: isMobile ? '100%' : 'auto',
                   backgroundColor: '#f3f4f6',
                   color: '#374151',
                   border: '1px solid #d1d5db',
@@ -1981,23 +2244,25 @@ function ProductionHPOApp() {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? '15px' : '20px' }}>
             {/* Lista de Termos */}
             <div style={{
               backgroundColor: 'white',
               borderRadius: '12px',
-              padding: '20px',
+              padding: isMobile ? '15px' : '20px',
               boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
             }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                <h3 style={{ margin: 0, color: '#374151' }}>
+              <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', gap: isMobile ? '10px' : '0', marginBottom: '15px' }}>
+                <h3 style={{ margin: 0, color: '#374151', fontSize: isMobile ? '16px' : '18px' }}>
                   📋 Termos HPO ({terms.length})
                 </h3>
                 <button
                   onClick={() => loadTerms(termsPage, searchTerm, filterCategory, filterStatus, filterDifficulty)}
                   disabled={loading}
                   style={{
-                    padding: '6px 12px',
+                    padding: isMobile ? '10px' : '6px 12px',
+                    minHeight: isMobile ? '44px' : 'auto',
+                    width: isMobile ? '100%' : 'auto',
                     backgroundColor: '#f3f4f6',
                     border: '1px solid #d1d5db',
                     borderRadius: '4px',
@@ -2009,7 +2274,15 @@ function ProductionHPOApp() {
                 </button>
               </div>
               
-              <div style={{ border: '1px solid #e5e7eb', borderRadius: '6px', maxHeight: '500px', overflowY: 'auto' }}>
+              <div 
+                style={{ 
+                  border: '1px solid #e5e7eb', 
+                  borderRadius: '6px', 
+                  maxHeight: '500px', 
+                  overflowY: 'auto',
+                  overflowX: 'hidden'
+                }}
+              >
                 {loading ? (
                   <div style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>
                     🔄 Carregando termos...
@@ -2022,48 +2295,42 @@ function ProductionHPOApp() {
                     }
                   </div>
                 ) : (
-                  terms.map(term => (
-                    <div
-                      key={term.id}
-                      onClick={() => setSelectedTerm(term)}
-                      style={{
-                        padding: '15px',
-                        borderBottom: '1px solid #f3f4f6',
-                        cursor: 'pointer',
-                        backgroundColor: selectedTerm?.id === term.id ? '#eff6ff' : 'transparent',
-                        borderLeft: selectedTerm?.id === term.id ? '3px solid #2563eb' : 'none'
-                      }}
-                    >
-                      <div style={{ fontWeight: '600', color: '#1f2937', fontSize: '14px' }}>
-                        {term.hpoId}
-                      </div>
-                      <div style={{ color: '#374151', marginTop: '4px', fontSize: '15px' }}>
-                        {term.labelEn}
-                      </div>
-                      {term.definitionEn && (
-                        <div style={{ color: '#6b7280', marginTop: '6px', fontSize: '12px' }}>
-                          {term.definitionEn.length > 100 ? 
-                            `${term.definitionEn.substring(0, 100)}...` : 
-                            term.definitionEn
+                  <>
+                    {terms.map((term, idx) => (
+                      <div
+                        key={term.id}
+                        onClick={() => {
+                          console.log('[TRANSLATE] Term selected:', term.hpoId);
+                          setSelectedTerm(term);
+                          
+                          // Check if we have cached translations
+                          if (translationsCache.current[term.id]) {
+                            setExistingTranslations(translationsCache.current[term.id]);
+                          } else {
+                            setExistingTranslations([]); // Clear until user clicks "Ver Traduções"
                           }
-                        </div>
-                      )}
-                      {term.category && (
-                        <div style={{ 
-                          marginTop: '6px',
-                          display: 'inline-block',
-                          padding: '2px 8px',
-                          backgroundColor: '#dbeafe',
-                          color: '#1e40af',
-                          borderRadius: '4px',
-                          fontSize: '11px',
-                          fontWeight: '500'
-                        }}>
-                          {term.category}
-                        </div>
-                      )}
-                    </div>
-                  ))
+                          
+                          // Set default variant
+                          if (user && (user as any).nativeVariant) {
+                            setSelectedVariant((user as any).nativeVariant);
+                          }
+                          
+                          // Open modal instead of showing inline
+                          setShowTranslationModal(true);
+                        }}
+                        style={{
+                          padding: '12px',
+                          borderBottom: idx < terms.length - 1 ? '1px solid #e5e7eb' : 'none',
+                          cursor: 'pointer',
+                          backgroundColor: selectedTerm?.id === term.id ? '#eff6ff' : '#fff',
+                          transition: 'background-color 0.15s ease'
+                        }}
+                      >
+                        <div style={{ fontWeight: '600', fontSize: '12px', color: '#1f2937', marginBottom: '4px' }}>{term.hpoId}</div>
+                        <div style={{ fontSize: '13px', color: '#374151' }}>{term.labelEn}</div>
+                      </div>
+                    ))}
+                  </>
                 )}
               </div>
 
@@ -2072,6 +2339,7 @@ function ProductionHPOApp() {
                 <div style={{
                   marginTop: '15px',
                   display: 'flex',
+                  flexDirection: isMobile ? 'column' : 'row',
                   justifyContent: 'center',
                   alignItems: 'center',
                   gap: '10px'
@@ -2080,7 +2348,9 @@ function ProductionHPOApp() {
                     onClick={() => loadTerms(termsPage - 1, searchTerm, filterCategory, filterStatus, filterDifficulty)}
                     disabled={termsPage === 1 || loading}
                     style={{
-                      padding: '8px 16px',
+                      padding: isMobile ? '12px' : '8px 16px',
+                      minHeight: isMobile ? '44px' : 'auto',
+                      width: isMobile ? '100%' : 'auto',
                       backgroundColor: termsPage === 1 || loading ? '#f3f4f6' : '#3b82f6',
                       color: termsPage === 1 || loading ? '#9ca3af' : 'white',
                       border: 'none',
@@ -2093,7 +2363,7 @@ function ProductionHPOApp() {
                     ← Anterior
                   </button>
 
-                  <span style={{ fontSize: '14px', color: '#6b7280', fontWeight: '500' }}>
+                  <span style={{ fontSize: '14px', color: '#6b7280', fontWeight: '500', order: isMobile ? -1 : 0 }}>
                     Página {termsPage} de {totalPages}
                   </span>
 
@@ -2101,7 +2371,9 @@ function ProductionHPOApp() {
                     onClick={() => loadTerms(termsPage + 1, searchTerm, filterCategory, filterStatus, filterDifficulty)}
                     disabled={termsPage >= totalPages || loading}
                     style={{
-                      padding: '8px 16px',
+                      padding: isMobile ? '12px' : '8px 16px',
+                      minHeight: isMobile ? '44px' : 'auto',
+                      width: isMobile ? '100%' : 'auto',
                       backgroundColor: termsPage >= totalPages || loading ? '#f3f4f6' : '#3b82f6',
                       color: termsPage >= totalPages || loading ? '#9ca3af' : 'white',
                       border: 'none',
@@ -2117,170 +2389,60 @@ function ProductionHPOApp() {
               )}
             </div>
 
-            {/* Formulário de Tradução */}
+            {/* Placeholder - Translation happens in modal */}
             <div style={{
               backgroundColor: 'white',
               borderRadius: '12px',
-              padding: '20px',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+              padding: isMobile ? '15px' : '20px',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+              textAlign: 'center'
             }}>
               {selectedTerm ? (
-                <>
-                  <h3 style={{ margin: '0 0 15px 0', color: '#374151' }}>✏️ Traduzir para Português</h3>
-                  
-                  <div style={{
-                    backgroundColor: '#f8fafc',
-                    padding: '15px',
-                    borderRadius: '8px',
-                    marginBottom: '20px',
-                    border: '1px solid #e2e8f0'
-                  }}>
-                    <div style={{ fontWeight: '600', color: '#1e40af', marginBottom: '8px' }}>
-                      {selectedTerm.hpoId}
-                    </div>
-                    <div style={{ color: '#374151', marginBottom: '8px' }}>
-                      <strong>Inglês:</strong> {selectedTerm.labelEn}
-                    </div>
-                    {selectedTerm.definitionEn && (
-                      <div style={{ color: '#6b7280', fontSize: '14px', marginBottom: '8px' }}>
-                        <strong>Definição:</strong> {selectedTerm.definitionEn}
-                      </div>
-                    )}
-                    {selectedTerm.synonymsEn && selectedTerm.synonymsEn.length > 0 && (
-                      <div style={{ color: '#6b7280', fontSize: '13px' }}>
-                        <strong>Sinônimos:</strong> {selectedTerm.synonymsEn.join(', ')}
-                      </div>
-                    )}
-                  </div>
-
-                  <div style={{ marginBottom: '15px' }}>
-                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
-                      Tradução em Português:
-                    </label>
-                    <textarea
-                      value={translation}
-                      onChange={(e) => setTranslation(e.target.value)}
-                      placeholder="Digite a tradução precisa do termo médico..."
-                      rows={4}
-                      style={{
-                        width: '100%',
-                        padding: '12px',
-                        border: '1px solid #d1d5db',
-                        borderRadius: '6px',
-                        boxSizing: 'border-box',
-                        fontFamily: 'inherit',
-                        fontSize: '14px'
-                      }}
-                    />
-                  </div>
-
-                  <div style={{ marginBottom: '20px' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', fontWeight: '500' }}>
-                      <span>Nível de Confiança: {confidence}/5</span>
-                      <button
-                        data-tooltip-id="confidence-level-tooltip"
-                        style={{ 
-                          background: 'none', 
-                          border: 'none', 
-                          color: '#3b82f6', 
-                          cursor: 'help',
-                          fontSize: '16px',
-                          padding: '0'
-                        }}
-                        type="button"
-                      >
-                        ℹ️
-                      </button>
-                    </label>
-                    <ReactTooltip 
-                      id="confidence-level-tooltip" 
-                      place="top"
-                      style={{ maxWidth: '400px', zIndex: 9999 }}
-                    >
-                      <div style={{ fontSize: '13px' }}>
-                        <div style={{ fontWeight: 'bold', marginBottom: '8px', fontSize: '14px' }}>
-                          🎯 Como avaliar seu nível de confiança?
-                        </div>
-                        <div style={{ marginBottom: '10px', borderBottom: '1px solid #e5e7eb', paddingBottom: '8px' }}>
-                          <strong>⭐ 1 - Incerto:</strong> Não tenho certeza da tradução. Pode conter erros ou ser imprecisa.
-                        </div>
-                        <div style={{ marginBottom: '10px', borderBottom: '1px solid #e5e7eb', paddingBottom: '8px' }}>
-                          <strong>⭐⭐ 2 - Baixa Confiança:</strong> A tradução pode estar correta, mas preciso de validação.
-                        </div>
-                        <div style={{ marginBottom: '10px', borderBottom: '1px solid #e5e7eb', paddingBottom: '8px' }}>
-                          <strong>⭐⭐⭐ 3 - Moderado:</strong> Confiante na tradução, mas pode haver nuances a revisar.
-                        </div>
-                        <div style={{ marginBottom: '10px', borderBottom: '1px solid #e5e7eb', paddingBottom: '8px' }}>
-                          <strong>⭐⭐⭐⭐ 4 - Alta Confiança:</strong> Muito confiante. Tradução precisa e bem fundamentada.
-                        </div>
-                        <div style={{ marginBottom: '10px', paddingBottom: '8px' }}>
-                          <strong>⭐⭐⭐⭐⭐ 5 - Totalmente Certo:</strong> Certeza absoluta. Validado por fontes confiáveis.
-                        </div>
-                        <div style={{ marginTop: '12px', paddingTop: '8px', borderTop: '1px solid #e5e7eb', fontSize: '12px', color: '#6b7280' }}>
-                          💡 <strong>Dica:</strong> Seu nível de confiança ajuda os revisores a priorizarem as traduções e afeta sua pontuação de qualidade!
-                        </div>
-                      </div>
-                    </ReactTooltip>
-                    <input
-                      type="range"
-                      min="1"
-                      max="5"
-                      value={confidence}
-                      onChange={(e) => setConfidence(Number(e.target.value))}
-                      style={{ width: '100%' }}
-                    />
-                    <div style={{ 
-                      display: 'flex', 
-                      justifyContent: 'space-between', 
-                      fontSize: '12px', 
-                      color: '#6b7280',
-                      marginTop: '5px'
-                    }}>
-                      <span>1 - Incerto</span>
-                      <span>3 - Moderado</span>
-                      <span>5 - Muito Confiante</span>
-                    </div>
-                  </div>
-
+                <div>
+                  <h3 style={{ color: '#1e40af', margin: '0 0 10px 0', fontSize: isMobile ? '18px' : '20px' }}>
+                    ✅ {selectedTerm.hpoId} Selecionado
+                  </h3>
+                  <p style={{ color: '#6b7280', marginBottom: '15px' }}>{selectedTerm.labelEn}</p>
                   <button
-                    onClick={submitTranslation}
-                    disabled={!translation.trim() || loading}
+                    onClick={() => setShowTranslationModal(true)}
                     style={{
-                      width: '100%',
-                      padding: '14px',
-                      backgroundColor: (translation.trim() && !loading) ? '#16a34a' : '#9ca3af',
+                      padding: '12px 24px',
+                      backgroundColor: '#3b82f6',
                       color: 'white',
                       border: 'none',
-                      borderRadius: '6px',
+                      borderRadius: '8px',
                       fontSize: '16px',
                       fontWeight: '600',
-                      cursor: (translation.trim() && !loading) ? 'pointer' : 'not-allowed'
+                      cursor: 'pointer'
                     }}
                   >
-                    {loading ? '⏳ Salvando...' : '✅ Salvar Tradução no Banco'}
+                    📝 Abrir Formulário de Tradução
                   </button>
-
-                  <div style={{
-                    marginTop: '15px',
-                    padding: '10px',
-                    backgroundColor: '#f0fdf4',
-                    borderRadius: '6px',
-                    fontSize: '12px',
-                    color: '#15803d',
-                    textAlign: 'center'
-                  }}>
-                    💾 Tradução será salva no PostgreSQL e vinculada ao seu usuário
-                  </div>
-                </>
+                </div>
               ) : (
-                <div style={{ textAlign: 'center', color: '#6b7280', padding: '60px 20px' }}>
-                  <div style={{ fontSize: '48px', marginBottom: '20px' }}>🎯</div>
-                  <h3>Selecione um Termo HPO</h3>
-                  <p>Escolha um termo da lista ao lado para começar</p>
+                <div style={{ padding: '40px 20px', color: '#9ca3af' }}>
+                  <div style={{ fontSize: '48px', marginBottom: '10px' }}>👈</div>
+                  <p style={{ fontSize: '16px', margin: 0 }}>Selecione um termo ao lado para começar a traduzir</p>
                 </div>
               )}
             </div>
           </div>
+          {/* End Grid */}
+
+          {/* NEW: Use TranslationModal component */}
+          <TranslationModal 
+            isOpen={showTranslationModal}
+            selectedTerm={selectedTerm}
+            onClose={() => setShowTranslationModal(false)}
+            onSubmit={(data) => {
+              // Chama a função de submit do pai com os dados do modal
+              submitTranslation(data.translation, data.linguisticNotes, data.confidence, data.selectedVariant);
+            }}
+            loading={loading}
+            user={user}
+            isMobile={isMobile}
+          />
+
         </div>
       </div>
     );
@@ -2294,6 +2456,15 @@ function ProductionHPOApp() {
     const [validationComments, setValidationComments] = useState('');
     const [validationDecision, setValidationDecision] = useState<'APPROVED' | 'NEEDS_REVISION' | 'REJECTED'>('APPROVED');
 
+    // Mobile detection
+    const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+    React.useEffect(() => {
+      const handleResize = () => setIsMobile(window.innerWidth <= 768);
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
     // Verificar se usuário tem permissão para revisar
     if (!user || !RoleHelpers.canVoteOnTranslation(user.role)) {
       return (
@@ -2306,7 +2477,9 @@ function ProductionHPOApp() {
     }
 
     useEffect(() => {
-      if (pendingTranslations.length === 0) {
+      if (!reviewLoadedRef.current) {
+        console.log('[REVIEW] Carregando traduções pendentes pela primeira vez...');
+        reviewLoadedRef.current = true;
         loadPendingTranslations();
       }
     }, []);
@@ -2318,7 +2491,7 @@ function ProductionHPOApp() {
     };
 
     return (
-      <div className="review-content" style={{ backgroundColor: '#f8fafc', minHeight: 'calc(100vh - 80px)', padding: '20px' }}>
+      <div className="review-content" style={{ backgroundColor: '#f8fafc', minHeight: 'calc(100vh - 80px)', padding: isMobile ? '15px' : '20px' }}>
         <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
           {/* Breadcrumbs */}
           <Breadcrumbs items={[
@@ -2328,15 +2501,15 @@ function ProductionHPOApp() {
 
           <div style={{
             backgroundColor: 'white',
-            padding: '20px',
+            padding: isMobile ? '15px' : '20px',
             borderRadius: '12px',
-            marginBottom: '20px',
+            marginBottom: isMobile ? '15px' : '20px',
             boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
           }}>
-            <h1 style={{ color: '#1e40af', margin: '0 0 10px 0' }}>
-              ✅ Sistema de Revisão de Traduções
+            <h1 style={{ color: '#1e40af', margin: '0 0 10px 0', fontSize: isMobile ? '22px' : '28px' }}>
+              ✅ {isMobile ? 'Revisão' : 'Sistema de Revisão de Traduções'}
             </h1>
-            <p style={{ color: '#64748b', margin: 0 }}>
+            <p style={{ color: '#64748b', margin: 0, fontSize: isMobile ? '13px' : '14px' }}>
               Valide traduções feitas por outros colaboradores e ganhe pontos
             </p>
             {error && (
@@ -2357,16 +2530,16 @@ function ProductionHPOApp() {
           {/* 🔍 Search and Filters Section */}
           <div style={{
             backgroundColor: 'white',
-            padding: '20px',
+            padding: isMobile ? '15px' : '20px',
             borderRadius: '12px',
-            marginBottom: '20px',
+            marginBottom: isMobile ? '15px' : '20px',
             boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
           }}>
             {/* Search Bar */}
             <div style={{ marginBottom: '15px' }}>
               <input
                 type="text"
-                placeholder="🔍 Buscar por HPO ID, termo ou tradutor..."
+                placeholder={isMobile ? "🔍 Buscar..." : "🔍 Buscar por HPO ID, termo ou tradutor..."}
                 value={reviewSearchTerm}
                 onChange={(e) => setReviewSearchTerm(e.target.value)}
                 onKeyPress={(e) => {
@@ -2376,10 +2549,10 @@ function ProductionHPOApp() {
                 }}
                 style={{
                   width: '100%',
-                  padding: '12px',
+                  padding: isMobile ? '10px' : '12px',
                   border: '2px solid #e5e7eb',
                   borderRadius: '8px',
-                  fontSize: '14px',
+                  fontSize: isMobile ? '13px' : '14px',
                   boxSizing: 'border-box'
                 }}
               />
@@ -2494,28 +2667,40 @@ function ProductionHPOApp() {
             )}
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+          <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', 
+            gap: isMobile ? '15px' : '20px' 
+          }}>
             {/* Lista de Traduções Pendentes */}
             <div style={{
               backgroundColor: 'white',
               borderRadius: '12px',
-              padding: '20px',
+              padding: isMobile ? '15px' : '20px',
               boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
             }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                <h3 style={{ margin: 0, color: '#374151' }}>
+              <div style={{ 
+                display: 'flex', 
+                flexDirection: isMobile ? 'column' : 'row',
+                justifyContent: 'space-between', 
+                alignItems: isMobile ? 'stretch' : 'center', 
+                marginBottom: '15px',
+                gap: isMobile ? '10px' : '0'
+              }}>
+                <h3 style={{ margin: 0, color: '#374151', fontSize: isMobile ? '16px' : '18px' }}>
                   📋 Traduções Pendentes ({pendingTranslations.length})
                 </h3>
                 <button
-                  onClick={loadPendingTranslations}
+                  onClick={() => loadPendingTranslations()}
                   disabled={loading}
                   style={{
-                    padding: '6px 12px',
+                    padding: isMobile ? '10px' : '6px 12px',
                     backgroundColor: '#f3f4f6',
                     border: '1px solid #d1d5db',
                     borderRadius: '4px',
                     cursor: loading ? 'not-allowed' : 'pointer',
-                    fontSize: '14px'
+                    fontSize: '14px',
+                    minHeight: isMobile ? '44px' : 'auto'
                   }}
                 >
                   🔄 {loading ? 'Carregando...' : 'Recarregar'}
@@ -2582,14 +2767,22 @@ function ProductionHPOApp() {
             <div style={{
               backgroundColor: 'white',
               borderRadius: '12px',
-              padding: '20px',
+              padding: isMobile ? '15px' : '20px',
               boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
             }}>
               {selectedPendingTranslation ? (
                 <>
-                  <h3 style={{ margin: '0 0 15px 0', color: '#374151', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <h3 style={{ 
+                    margin: '0 0 15px 0', 
+                    color: '#374151', 
+                    display: 'flex', 
+                    flexDirection: isMobile ? 'column' : 'row',
+                    alignItems: isMobile ? 'flex-start' : 'center', 
+                    gap: '8px',
+                    fontSize: isMobile ? '16px' : '18px'
+                  }}>
                     ✅ Validar Tradução
-                    <span style={{ fontSize: '14px', fontWeight: 'normal', color: '#6b7280' }}>
+                    <span style={{ fontSize: isMobile ? '12px' : '14px', fontWeight: 'normal', color: '#6b7280' }}>
                       ({selectedPendingTranslation.term.hpoId})
                     </span>
                   </h3>
@@ -2597,9 +2790,9 @@ function ProductionHPOApp() {
                   {/* Split View: Original vs Tradução */}
                   <div style={{
                     display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: '20px',
-                    marginBottom: '20px'
+                    gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
+                    gap: isMobile ? '12px' : '20px',
+                    marginBottom: isMobile ? '15px' : '20px'
                   }}>
                     {/* Coluna Esquerda: Termo Original */}
                     <div style={{
@@ -2767,38 +2960,44 @@ function ProductionHPOApp() {
                   </div>
 
                   <div style={{ marginBottom: '15px' }}>
-                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', fontSize: isMobile ? '13px' : '14px' }}>
                       Decisão:
                     </label>
-                    <div style={{ display: 'flex', gap: '10px' }}>
+                    <div style={{ 
+                      display: 'flex', 
+                      flexDirection: isMobile ? 'column' : 'row',
+                      gap: '10px' 
+                    }}>
                       <button
                         onClick={() => setValidationDecision('APPROVED')}
                         style={{
                           flex: 1,
-                          padding: '10px',
+                          padding: isMobile ? '12px' : '10px',
                           backgroundColor: validationDecision === 'APPROVED' ? '#16a34a' : '#f3f4f6',
                           color: validationDecision === 'APPROVED' ? 'white' : '#374151',
                           border: 'none',
                           borderRadius: '6px',
                           cursor: 'pointer',
                           fontWeight: '500',
-                          fontSize: '14px'
+                          fontSize: '14px',
+                          minHeight: isMobile ? '44px' : 'auto'
                         }}
                       >
-                        ✅ Aprovar Tradução
+                        ✅ {isMobile ? 'Aprovar' : 'Aprovar Tradução'}
                       </button>
                       <button
                         onClick={() => setValidationDecision('NEEDS_REVISION')}
                         style={{
                           flex: 1,
-                          padding: '10px',
+                          padding: isMobile ? '12px' : '10px',
                           backgroundColor: validationDecision === 'NEEDS_REVISION' ? '#f59e0b' : '#f3f4f6',
                           color: validationDecision === 'NEEDS_REVISION' ? 'white' : '#374151',
                           border: 'none',
                           borderRadius: '6px',
                           cursor: 'pointer',
                           fontWeight: '500',
-                          fontSize: '14px'
+                          fontSize: '14px',
+                          minHeight: isMobile ? '44px' : 'auto'
                         }}
                       >
                         ⚠️ Revisar
@@ -2807,14 +3006,15 @@ function ProductionHPOApp() {
                         onClick={() => setValidationDecision('REJECTED')}
                         style={{
                           flex: 1,
-                          padding: '10px',
+                          padding: isMobile ? '12px' : '10px',
                           backgroundColor: validationDecision === 'REJECTED' ? '#dc2626' : '#f3f4f6',
                           color: validationDecision === 'REJECTED' ? 'white' : '#374151',
                           border: 'none',
                           borderRadius: '6px',
                           cursor: 'pointer',
                           fontWeight: '500',
-                          fontSize: '14px'
+                          fontSize: '14px',
+                          minHeight: isMobile ? '44px' : 'auto'
                         }}
                       >
                         ❌ Rejeitar
@@ -3763,7 +3963,7 @@ function ProductionHPOApp() {
     return (
       <div style={{ backgroundColor: '#f8fafc', minHeight: 'calc(100vh - 80px)', padding: '40px 20px' }}>
         <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
-          <Breadcrumbs items={['Home', 'Perfil']} />
+          <Breadcrumbs items={[{ label: 'Home', page: 'dashboard' }, { label: 'Perfil' }]} />
           
           {/* Profile Completion Card (Task #6) */}
           {!profileCompletion.isComplete && (
@@ -4561,8 +4761,17 @@ function ProductionHPOApp() {
   // LEADERBOARD PAGE
   // ============================================
   const LeaderboardPage = () => {
+    // Mobile detection
+    const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+    React.useEffect(() => {
+      const handleResize = () => setIsMobile(window.innerWidth <= 768);
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
     return (
-      <div className="leaderboard-content" style={{ padding: '30px', maxWidth: '1200px', margin: '0 auto' }}>
+      <div className="leaderboard-content" style={{ padding: isMobile ? '15px' : '30px', maxWidth: '1200px', margin: '0 auto' }}>
         {/* Breadcrumbs */}
         <Breadcrumbs items={[
           { label: 'Dashboard', page: 'dashboard' },
@@ -4578,23 +4787,24 @@ function ProductionHPOApp() {
           {/* Header */}
           <div style={{
             background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
-            padding: '30px',
+            padding: isMobile ? '20px' : '30px',
             color: 'white'
           }}>
-            <h1 style={{ margin: 0, fontSize: '32px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '15px' }}>
-              <span style={{ fontSize: '40px' }}>🏆</span>
-              Ranking de Tradutores
+            <h1 style={{ margin: 0, fontSize: isMobile ? '24px' : '32px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: isMobile ? '10px' : '15px' }}>
+              <span style={{ fontSize: isMobile ? '32px' : '40px' }}>🏆</span>
+              {isMobile ? 'Ranking' : 'Ranking de Tradutores'}
             </h1>
-            <p style={{ margin: '10px 0 0 0', opacity: 0.95, fontSize: '16px' }}>
-              Conheça os melhores contribuidores da plataforma
+            <p style={{ margin: '10px 0 0 0', opacity: 0.95, fontSize: isMobile ? '13px' : '16px' }}>
+              {isMobile ? 'Melhores contribuidores' : 'Conheça os melhores contribuidores da plataforma'}
             </p>
           </div>
 
           {/* Period Selector */}
           <div style={{
-            padding: '20px 30px',
+            padding: isMobile ? '15px' : '20px 30px',
             borderBottom: '1px solid #e5e7eb',
             display: 'flex',
+            flexDirection: isMobile ? 'column' : 'row',
             gap: '10px',
             backgroundColor: '#f9fafb'
           }}>
@@ -4603,7 +4813,9 @@ function ProductionHPOApp() {
                 key={period}
                 onClick={() => loadLeaderboard(period)}
                 style={{
-                  padding: '8px 16px',
+                  padding: isMobile ? '12px 16px' : '8px 16px',
+                  minHeight: isMobile ? '44px' : 'auto',
+                  width: isMobile ? '100%' : 'auto',
                   backgroundColor: leaderboardPeriod === period ? '#fbbf24' : 'white',
                   color: leaderboardPeriod === period ? 'white' : '#374151',
                   border: '1px solid #e5e7eb',
@@ -4621,32 +4833,32 @@ function ProductionHPOApp() {
           {/* Current User Card */}
           {leaderboardData?.currentUser && (
             <div style={{
-              padding: '20px 30px',
+              padding: isMobile ? '15px' : '20px 30px',
               backgroundColor: '#fef3c7',
               borderBottom: '2px solid #fbbf24'
             }}>
-              <h3 style={{ margin: '0 0 15px 0', color: '#92400e', fontSize: '16px', fontWeight: '600' }}>
+              <h3 style={{ margin: '0 0 15px 0', color: '#92400e', fontSize: isMobile ? '14px' : '16px', fontWeight: '600' }}>
                 📍 Sua Posição
               </h3>
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: '60px 1fr auto',
-                gap: '15px',
+                gridTemplateColumns: isMobile ? '50px 1fr' : '60px 1fr auto',
+                gap: isMobile ? '12px' : '15px',
                 alignItems: 'center',
                 backgroundColor: 'white',
-                padding: '15px',
+                padding: isMobile ? '12px' : '15px',
                 borderRadius: '8px',
                 border: '2px solid #fbbf24'
               }}>
                 <div style={{
-                  width: '60px',
-                  height: '60px',
+                  width: isMobile ? '50px' : '60px',
+                  height: isMobile ? '50px' : '60px',
                   backgroundColor: '#fbbf24',
                   borderRadius: '50%',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  fontSize: '24px',
+                  fontSize: isMobile ? '18px' : '24px',
                   fontWeight: '700',
                   color: 'white'
                 }}>
@@ -4654,16 +4866,16 @@ function ProductionHPOApp() {
                 </div>
 
                 <div>
-                  <div style={{ fontSize: '18px', fontWeight: '700', color: '#1f2937', marginBottom: '5px' }}>
+                  <div style={{ fontSize: isMobile ? '16px' : '18px', fontWeight: '700', color: '#1f2937', marginBottom: '5px' }}>
                     {leaderboardData.currentUser.name}
                   </div>
-                  <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '8px' }}>
+                  <div style={{ fontSize: isMobile ? '12px' : '14px', color: '#6b7280', marginBottom: '8px' }}>
                     Nível {leaderboardData.currentUser.level} • {leaderboardData.currentUser.points} pontos
                   </div>
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                     {leaderboardData.currentUser.badges.map(badge => (
                       <span key={badge} style={{
-                        fontSize: '11px',
+                        fontSize: isMobile ? '10px' : '11px',
                         padding: '3px 8px',
                         backgroundColor: '#fef3c7',
                         color: '#92400e',
@@ -4676,35 +4888,81 @@ function ProductionHPOApp() {
                   </div>
                 </div>
 
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '5px' }}>
-                    {leaderboardData.currentUser.stats.totalTranslations} traduções
+                {!isMobile && (
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '5px' }}>
+                      {leaderboardData.currentUser.stats.totalTranslations} traduções
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                      {leaderboardData.currentUser.stats.totalValidations} validações
+                    </div>
+                    <div style={{
+                      marginTop: '8px',
+                      fontSize: '14px',
+                      fontWeight: '700',
+                      color: '#16a34a'
+                    }}>
+                      {leaderboardData.currentUser.stats.approvalRate}% aprovadas
+                    </div>
                   </div>
-                  <div style={{ fontSize: '12px', color: '#6b7280' }}>
-                    {leaderboardData.currentUser.stats.totalValidations} validações
+                )}
+              </div>
+              
+              {/* Stats mobile - below card */}
+              {isMobile && (
+                <div style={{
+                  marginTop: '12px',
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr 1fr',
+                  gap: '10px'
+                }}>
+                  <div style={{
+                    backgroundColor: 'white',
+                    padding: '10px',
+                    borderRadius: '6px',
+                    textAlign: 'center'
+                  }}>
+                    <div style={{ fontSize: '18px', fontWeight: '700', color: '#1f2937' }}>
+                      {leaderboardData.currentUser.stats.totalTranslations}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#6b7280' }}>Traduções</div>
                   </div>
                   <div style={{
-                    marginTop: '8px',
-                    fontSize: '14px',
-                    fontWeight: '700',
-                    color: '#16a34a'
+                    backgroundColor: 'white',
+                    padding: '10px',
+                    borderRadius: '6px',
+                    textAlign: 'center'
                   }}>
-                    {leaderboardData.currentUser.stats.approvalRate}% aprovadas
+                    <div style={{ fontSize: '18px', fontWeight: '700', color: '#1f2937' }}>
+                      {leaderboardData.currentUser.stats.totalValidations}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#6b7280' }}>Validações</div>
+                  </div>
+                  <div style={{
+                    backgroundColor: 'white',
+                    padding: '10px',
+                    borderRadius: '6px',
+                    textAlign: 'center'
+                  }}>
+                    <div style={{ fontSize: '18px', fontWeight: '700', color: '#16a34a' }}>
+                      {leaderboardData.currentUser.stats.approvalRate}%
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#6b7280' }}>Aprovadas</div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
 
           {/* Leaderboard List */}
-          <div style={{ padding: '30px' }}>
+          <div style={{ padding: isMobile ? '15px' : '30px' }}>
             {loading ? (
               <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
                 <div style={{ fontSize: '48px', marginBottom: '20px' }}>⏳</div>
                 <p>Carregando ranking...</p>
               </div>
             ) : leaderboardData?.leaderboard && leaderboardData.leaderboard.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? '12px' : '15px' }}>
                 {leaderboardData.leaderboard.map((entry) => {
                   const isCurrentUser = entry.userId === user?.id;
                   const isMedal = entry.rank <= 3;
@@ -4714,10 +4972,10 @@ function ProductionHPOApp() {
                       key={entry.userId}
                       style={{
                         display: 'grid',
-                        gridTemplateColumns: '60px 1fr auto',
-                        gap: '15px',
+                        gridTemplateColumns: isMobile ? '50px 1fr' : '60px 1fr auto',
+                        gap: isMobile ? '12px' : '15px',
                         alignItems: 'center',
-                        padding: '15px',
+                        padding: isMobile ? '12px' : '15px',
                         backgroundColor: isCurrentUser ? '#fef3c7' : '#f9fafb',
                         borderRadius: '8px',
                         border: `2px solid ${isCurrentUser ? '#fbbf24' : '#e5e7eb'}`,
@@ -4727,8 +4985,8 @@ function ProductionHPOApp() {
                     >
                       {/* Rank */}
                       <div style={{
-                        width: '60px',
-                        height: '60px',
+                        width: isMobile ? '50px' : '60px',
+                        height: isMobile ? '50px' : '60px',
                         backgroundColor: isMedal 
                           ? (entry.rank === 1 ? '#fbbf24' : entry.rank === 2 ? '#cbd5e1' : '#c2410c')
                           : '#e5e7eb',
@@ -4736,7 +4994,7 @@ function ProductionHPOApp() {
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        fontSize: isMedal ? '28px' : '20px',
+                        fontSize: isMedal ? (isMobile ? '22px' : '28px') : (isMobile ? '16px' : '20px'),
                         fontWeight: '700',
                         color: isMedal ? 'white' : '#6b7280'
                       }}>
@@ -4746,24 +5004,25 @@ function ProductionHPOApp() {
                       {/* User Info */}
                       <div>
                         <div style={{
-                          fontSize: '18px',
+                          fontSize: isMobile ? '16px' : '18px',
                           fontWeight: '700',
                           color: '#1f2937',
                           marginBottom: '5px',
                           display: 'flex',
                           alignItems: 'center',
-                          gap: '8px'
+                          gap: '8px',
+                          flexWrap: 'wrap'
                         }}>
                           {entry.name}
-                          {isCurrentUser && <span style={{ fontSize: '14px', color: '#92400e' }}>(Você)</span>}
+                          {isCurrentUser && <span style={{ fontSize: isMobile ? '12px' : '14px', color: '#92400e' }}>(Você)</span>}
                         </div>
-                        <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '8px' }}>
-                          Nível {entry.level} • {entry.points} pontos • {entry.role}
+                        <div style={{ fontSize: isMobile ? '12px' : '14px', color: '#6b7280', marginBottom: '8px' }}>
+                          Nível {entry.level} • {entry.points} pontos{isMobile ? '' : ` • ${entry.role}`}
                         </div>
                         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                           {entry.badges.map(badge => (
                             <span key={badge} style={{
-                              fontSize: '11px',
+                              fontSize: isMobile ? '10px' : '11px',
                               padding: '3px 8px',
                               backgroundColor: isMedal ? '#fef3c7' : '#e0e7ff',
                               color: isMedal ? '#92400e' : '#3730a3',
@@ -4774,25 +5033,44 @@ function ProductionHPOApp() {
                             </span>
                           ))}
                         </div>
+                        
+                        {/* Stats mobile - below user info */}
+                        {isMobile && (
+                          <div style={{
+                            marginTop: '10px',
+                            display: 'flex',
+                            gap: '15px',
+                            fontSize: '12px',
+                            color: '#6b7280'
+                          }}>
+                            <span>📝 {entry.stats.totalTranslations}</span>
+                            <span>✅ {entry.stats.totalValidations}</span>
+                            <span style={{ color: '#16a34a', fontWeight: '700' }}>
+                              {entry.stats.approvalRate}%
+                            </span>
+                          </div>
+                        )}
                       </div>
 
-                      {/* Stats */}
-                      <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '5px' }}>
-                          📝 {entry.stats.totalTranslations} traduções
+                      {/* Stats desktop - right column */}
+                      {!isMobile && (
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '5px' }}>
+                            📝 {entry.stats.totalTranslations} traduções
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '5px' }}>
+                            ✅ {entry.stats.totalValidations} validações
+                          </div>
+                          <div style={{
+                            marginTop: '8px',
+                            fontSize: '14px',
+                            fontWeight: '700',
+                            color: '#16a34a'
+                          }}>
+                            {entry.stats.approvalRate}% aprovadas
+                          </div>
                         </div>
-                        <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '5px' }}>
-                          ✅ {entry.stats.totalValidations} validações
-                        </div>
-                        <div style={{
-                          marginTop: '8px',
-                          fontSize: '14px',
-                          fontWeight: '700',
-                          color: '#16a34a'
-                        }}>
-                          {entry.stats.approvalRate}% aprovadas
-                        </div>
-                      </div>
+                      )}
                     </div>
                   );
                 })}
@@ -4828,6 +5106,15 @@ function ProductionHPOApp() {
   // HISTORY PAGE
   // ============================================
   const HistoryPage = () => {
+    // Mobile detection
+    const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+    React.useEffect(() => {
+      const handleResize = () => setIsMobile(window.innerWidth <= 768);
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
     // DESABILITADO - Carregamento automático removido para evitar loop
     // Usuário deve clicar em "Carregar Histórico"
     // useEffect(() => {
@@ -4865,7 +5152,7 @@ function ProductionHPOApp() {
     };
 
     return (
-      <div className="history-content" style={{ padding: '30px', maxWidth: '1400px', margin: '0 auto' }}>
+      <div className="history-content" style={{ padding: isMobile ? '15px' : '30px', maxWidth: '1400px', margin: '0 auto' }}>
         <div style={{
           backgroundColor: 'white',
           borderRadius: '12px',
@@ -4875,25 +5162,27 @@ function ProductionHPOApp() {
           {/* Header */}
           <div style={{
             background: 'linear-gradient(135deg, #3b82f6 0%, #1e40af 100%)',
-            padding: '30px',
+            padding: isMobile ? '20px' : '30px',
             color: 'white'
           }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
+            <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', flexWrap: 'wrap', gap: '15px' }}>
               <div>
-                <h1 style={{ margin: 0, fontSize: '32px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '15px' }}>
-                  <span style={{ fontSize: '40px' }}>📚</span>
-                  Meu Histórico de Traduções
+                <h1 style={{ margin: 0, fontSize: isMobile ? '24px' : '32px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: isMobile ? '10px' : '15px' }}>
+                  <span style={{ fontSize: isMobile ? '32px' : '40px' }}>📚</span>
+                  {isMobile ? 'Histórico' : 'Meu Histórico de Traduções'}
                 </h1>
-                <p style={{ margin: '10px 0 0 0', opacity: 0.95, fontSize: '16px' }}>
-                  Acompanhe todas as suas contribuições
+                <p style={{ margin: '10px 0 0 0', opacity: 0.95, fontSize: isMobile ? '13px' : '16px' }}>
+                  {isMobile ? 'Suas contribuições' : 'Acompanhe todas as suas contribuições'}
                 </p>
               </div>
-              <div style={{ display: 'flex', gap: '10px' }}>
+              <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: '10px', width: isMobile ? '100%' : 'auto' }}>
                 {!historyLoadedRef.current && (
                   <button
                     onClick={handleLoadHistory}
                     style={{
-                      padding: '12px 24px',
+                      padding: isMobile ? '14px 24px' : '12px 24px',
+                      minHeight: isMobile ? '44px' : 'auto',
+                      width: isMobile ? '100%' : 'auto',
                       backgroundColor: '#10b981',
                       color: 'white',
                       border: 'none',
@@ -4903,6 +5192,7 @@ function ProductionHPOApp() {
                       fontSize: '15px',
                       display: 'flex',
                       alignItems: 'center',
+                      justifyContent: 'center',
                       gap: '8px',
                       boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
                     }}
@@ -4914,7 +5204,9 @@ function ProductionHPOApp() {
                 <button
                   onClick={() => setShowExportModal(true)}
                   style={{
-                    padding: '12px 24px',
+                    padding: isMobile ? '14px 24px' : '12px 24px',
+                    minHeight: isMobile ? '44px' : 'auto',
+                    width: isMobile ? '100%' : 'auto',
                     backgroundColor: 'white',
                     color: '#1e40af',
                     border: 'none',
@@ -4924,11 +5216,12 @@ function ProductionHPOApp() {
                     fontSize: '15px',
                     display: 'flex',
                     alignItems: 'center',
+                    justifyContent: 'center',
                     gap: '8px',
                     boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
                   }}
                 >
-                  📥 Exportar Traduções
+                  📥 {isMobile ? 'Exportar' : 'Exportar Traduções'}
                 </button>
               </div>
             </div>
@@ -4938,57 +5231,57 @@ function ProductionHPOApp() {
           {historyData?.stats && (
             <div style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-              gap: '15px',
-              padding: '30px',
+              gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(150px, 1fr))',
+              gap: isMobile ? '10px' : '15px',
+              padding: isMobile ? '15px' : '30px',
               backgroundColor: '#f9fafb',
               borderBottom: '1px solid #e5e7eb'
             }}>
-              <div style={{ textAlign: 'center', padding: '15px', backgroundColor: 'white', borderRadius: '8px' }}>
-                <div style={{ fontSize: '28px', fontWeight: '700', color: '#3b82f6' }}>
+              <div style={{ textAlign: 'center', padding: isMobile ? '12px' : '15px', backgroundColor: 'white', borderRadius: '8px' }}>
+                <div style={{ fontSize: isMobile ? '24px' : '28px', fontWeight: '700', color: '#3b82f6' }}>
                   {historyData.stats.total}
                 </div>
-                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '5px' }}>
+                <div style={{ fontSize: isMobile ? '11px' : '12px', color: '#6b7280', marginTop: '5px' }}>
                   Total
                 </div>
               </div>
-              <div style={{ textAlign: 'center', padding: '15px', backgroundColor: 'white', borderRadius: '8px' }}>
-                <div style={{ fontSize: '28px', fontWeight: '700', color: '#16a34a' }}>
+              <div style={{ textAlign: 'center', padding: isMobile ? '12px' : '15px', backgroundColor: 'white', borderRadius: '8px' }}>
+                <div style={{ fontSize: isMobile ? '24px' : '28px', fontWeight: '700', color: '#16a34a' }}>
                   {historyData.stats.approved}
                 </div>
-                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '5px' }}>
+                <div style={{ fontSize: isMobile ? '11px' : '12px', color: '#6b7280', marginTop: '5px' }}>
                   Aprovadas
                 </div>
               </div>
-              <div style={{ textAlign: 'center', padding: '15px', backgroundColor: 'white', borderRadius: '8px' }}>
-                <div style={{ fontSize: '28px', fontWeight: '700', color: '#f59e0b' }}>
+              <div style={{ textAlign: 'center', padding: isMobile ? '12px' : '15px', backgroundColor: 'white', borderRadius: '8px' }}>
+                <div style={{ fontSize: isMobile ? '24px' : '28px', fontWeight: '700', color: '#f59e0b' }}>
                   {historyData.stats.pending}
                 </div>
-                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '5px' }}>
+                <div style={{ fontSize: isMobile ? '11px' : '12px', color: '#6b7280', marginTop: '5px' }}>
                   Pendentes
                 </div>
               </div>
-              <div style={{ textAlign: 'center', padding: '15px', backgroundColor: 'white', borderRadius: '8px' }}>
-                <div style={{ fontSize: '28px', fontWeight: '700', color: '#dc2626' }}>
+              <div style={{ textAlign: 'center', padding: isMobile ? '12px' : '15px', backgroundColor: 'white', borderRadius: '8px' }}>
+                <div style={{ fontSize: isMobile ? '24px' : '28px', fontWeight: '700', color: '#dc2626' }}>
                   {historyData.stats.rejected}
                 </div>
-                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '5px' }}>
+                <div style={{ fontSize: isMobile ? '11px' : '12px', color: '#6b7280', marginTop: '5px' }}>
                   Rejeitadas
                 </div>
               </div>
-              <div style={{ textAlign: 'center', padding: '15px', backgroundColor: 'white', borderRadius: '8px' }}>
-                <div style={{ fontSize: '28px', fontWeight: '700', color: '#8b5cf6' }}>
+              <div style={{ textAlign: 'center', padding: isMobile ? '12px' : '15px', backgroundColor: 'white', borderRadius: '8px' }}>
+                <div style={{ fontSize: isMobile ? '24px' : '28px', fontWeight: '700', color: '#8b5cf6' }}>
                   {historyData.stats.needsRevision}
                 </div>
-                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '5px' }}>
+                <div style={{ fontSize: isMobile ? '11px' : '12px', color: '#6b7280', marginTop: '5px' }}>
                   Revisão
                 </div>
               </div>
-              <div style={{ textAlign: 'center', padding: '15px', backgroundColor: 'white', borderRadius: '8px' }}>
-                <div style={{ fontSize: '28px', fontWeight: '700', color: '#16a34a' }}>
+              <div style={{ textAlign: 'center', padding: isMobile ? '12px' : '15px', backgroundColor: 'white', borderRadius: '8px' }}>
+                <div style={{ fontSize: isMobile ? '24px' : '28px', fontWeight: '700', color: '#16a34a' }}>
                   {historyData.stats.approvalRate}%
                 </div>
-                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '5px' }}>
+                <div style={{ fontSize: isMobile ? '11px' : '12px', color: '#6b7280', marginTop: '5px' }}>
                   Taxa Aprovação
                 </div>
               </div>
@@ -4997,11 +5290,12 @@ function ProductionHPOApp() {
 
           {/* Tabs (Task #4) */}
           <div style={{
-            padding: '0 30px',
+            padding: isMobile ? '0 15px' : '0 30px',
             borderBottom: '2px solid #e5e7eb',
             display: 'flex',
             gap: '0',
-            backgroundColor: 'white'
+            backgroundColor: 'white',
+            overflowX: isMobile ? 'auto' : 'visible'
           }}>
             {([
               { key: 'ALL' as const, label: '🌐 Todas', count: historyData?.stats?.total || 0 },
@@ -5017,7 +5311,8 @@ function ProductionHPOApp() {
                   loadHistory(tab.key === 'ALL' ? undefined : tab.key, 1);
                 }}
                 style={{
-                  padding: '15px 24px',
+                  padding: isMobile ? '12px 16px' : '15px 24px',
+                  minWidth: isMobile ? '120px' : 'auto',
                   backgroundColor: 'transparent',
                   color: historyTab === tab.key ? '#3b82f6' : '#6b7280',
                   border: 'none',
@@ -5089,44 +5384,64 @@ function ProductionHPOApp() {
           </div>
 
           {/* Translations List */}
-          <div style={{ padding: '30px' }}>
+          <div style={{ padding: isMobile ? '15px' : '30px' }}>
             {loading ? (
-              <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
-                <div style={{ fontSize: '48px', marginBottom: '20px' }}>⏳</div>
-                <p>Carregando histórico...</p>
+              <div style={{ textAlign: 'center', padding: isMobile ? '30px' : '40px', color: '#6b7280' }}>
+                <div style={{ fontSize: isMobile ? '40px' : '48px', marginBottom: '20px' }}>⏳</div>
+                <p style={{ fontSize: isMobile ? '14px' : '16px' }}>Carregando histórico...</p>
               </div>
             ) : historyData?.translations && historyData.translations.length > 0 ? (
               <>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? '12px' : '15px' }}>
                   {historyData.translations.map((translation) => (
                     <div
                       key={translation.id}
                       style={{
                         backgroundColor: '#f9fafb',
-                        padding: '20px',
+                        padding: isMobile ? '15px' : '20px',
                         borderRadius: '8px',
                         border: '1px solid #e5e7eb'
                       }}
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '15px' }}>
+                      <div style={{ 
+                        display: 'flex', 
+                        flexDirection: isMobile ? 'column' : 'row',
+                        justifyContent: 'space-between', 
+                        alignItems: isMobile ? 'stretch' : 'start', 
+                        marginBottom: '15px',
+                        gap: isMobile ? '12px' : '0'
+                      }}>
                         <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '5px' }}>
+                          <div style={{ fontSize: isMobile ? '12px' : '14px', color: '#6b7280', marginBottom: '5px' }}>
                             {translation.term.hpoId} • {translation.term.category || 'Sem categoria'}
                           </div>
-                          <div style={{ fontSize: '16px', fontWeight: '600', color: '#1f2937', marginBottom: '8px' }}>
+                          <div style={{ fontSize: isMobile ? '14px' : '16px', fontWeight: '600', color: '#1f2937', marginBottom: '8px' }}>
                             EN: {translation.term.labelEn}
                           </div>
-                          <div style={{ fontSize: '16px', fontWeight: '600', color: '#3b82f6' }}>
+                          <div style={{ fontSize: isMobile ? '14px' : '16px', fontWeight: '600', color: '#3b82f6' }}>
                             PT: {translation.labelPt}
                           </div>
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+                        <div style={{ 
+                          display: 'flex', 
+                          flexDirection: isMobile ? 'row' : 'column',
+                          alignItems: isMobile ? 'center' : 'flex-end',
+                          justifyContent: isMobile ? 'space-between' : 'flex-start',
+                          gap: '8px' 
+                        }}>
                           {getStatusBadge(translation.status)}
-                          <div style={{ fontSize: '12px', color: '#6b7280' }}>
-                            {new Date(translation.createdAt).toLocaleDateString('pt-BR')}
-                          </div>
-                          <div style={{ fontSize: '12px', color: '#6b7280' }}>
-                            Confiança: {translation.confidence}/5 ⭐
+                          <div style={{ 
+                            display: 'flex', 
+                            flexDirection: isMobile ? 'column' : 'column',
+                            alignItems: isMobile ? 'flex-end' : 'flex-end',
+                            gap: '4px'
+                          }}>
+                            <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                              {new Date(translation.createdAt).toLocaleDateString('pt-BR')}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                              Confiança: {translation.confidence}/5 ⭐
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -5191,17 +5506,27 @@ function ProductionHPOApp() {
                 {/* Pagination */}
                 {historyData.pagination && historyData.pagination.totalPages > 1 && (
                   <div style={{
-                    marginTop: '30px',
+                    marginTop: isMobile ? '20px' : '30px',
                     display: 'flex',
+                    flexDirection: isMobile ? 'column' : 'row',
                     justifyContent: 'center',
                     alignItems: 'center',
                     gap: '10px'
                   }}>
+                    <span style={{ 
+                      fontSize: '14px', 
+                      color: '#6b7280',
+                      order: isMobile ? -1 : 0
+                    }}>
+                      Página {historyPage} de {historyData.pagination.totalPages}
+                    </span>
                     <button
                       onClick={() => loadHistory(historyFilter === 'ALL' ? undefined : historyFilter, historyPage - 1)}
                       disabled={historyPage === 1}
                       style={{
-                        padding: '8px 16px',
+                        padding: isMobile ? '12px 16px' : '8px 16px',
+                        minHeight: isMobile ? '44px' : 'auto',
+                        width: isMobile ? '100%' : 'auto',
                         backgroundColor: historyPage === 1 ? '#e5e7eb' : '#3b82f6',
                         color: historyPage === 1 ? '#9ca3af' : 'white',
                         border: 'none',
@@ -5212,14 +5537,13 @@ function ProductionHPOApp() {
                     >
                       ← Anterior
                     </button>
-                    <span style={{ fontSize: '14px', color: '#6b7280' }}>
-                      Página {historyPage} de {historyData.pagination.totalPages}
-                    </span>
                     <button
                       onClick={() => loadHistory(historyFilter === 'ALL' ? undefined : historyFilter, historyPage + 1)}
                       disabled={historyPage === historyData.pagination.totalPages}
                       style={{
-                        padding: '8px 16px',
+                        padding: isMobile ? '12px 16px' : '8px 16px',
+                        minHeight: isMobile ? '44px' : 'auto',
+                        width: isMobile ? '100%' : 'auto',
                         backgroundColor: historyPage === historyData.pagination.totalPages ? '#e5e7eb' : '#3b82f6',
                         color: historyPage === historyData.pagination.totalPages ? '#9ca3af' : 'white',
                         border: 'none',
@@ -5234,15 +5558,17 @@ function ProductionHPOApp() {
                 )}
               </>
             ) : (
-              <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
-                <div style={{ fontSize: '48px', marginBottom: '20px' }}>📚</div>
-                <h3>Nenhuma tradução encontrada</h3>
-                <p>Comece a traduzir termos para ver seu histórico aqui!</p>
+              <div style={{ textAlign: 'center', padding: isMobile ? '30px 15px' : '40px', color: '#6b7280' }}>
+                <div style={{ fontSize: isMobile ? '40px' : '48px', marginBottom: '20px' }}>📚</div>
+                <h3 style={{ fontSize: isMobile ? '18px' : '20px' }}>Nenhuma tradução encontrada</h3>
+                <p style={{ fontSize: isMobile ? '14px' : '16px' }}>Comece a traduzir termos para ver seu histórico aqui!</p>
                 <button
                   onClick={() => setCurrentPage('translate')}
                   style={{
                     marginTop: '20px',
                     padding: '12px 24px',
+                    minHeight: isMobile ? '44px' : 'auto',
+                    width: isMobile ? '100%' : 'auto',
                     backgroundColor: '#3b82f6',
                     color: 'white',
                     border: 'none',
@@ -6141,6 +6467,13 @@ function ProductionHPOApp() {
     const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
     const [showBulkModal, setShowBulkModal] = useState(false);
     const [bulkAction, setBulkAction] = useState('');
+    const [showCreateUserModal, setShowCreateUserModal] = useState(false);
+    const [newUserData, setNewUserData] = useState({
+      name: '',
+      email: '',
+      password: '',
+      role: 'TRANSLATOR'
+    });
 
     const USERS_PER_PAGE = 50;
 
@@ -6362,6 +6695,58 @@ function ProductionHPOApp() {
       }
     };
 
+    const handleCreateUser = async () => {
+      if (!newUserData.name || !newUserData.email) {
+        ToastService.warning('Preencha nome e email');
+        return;
+      }
+
+      if (!newUserData.email.includes('@')) {
+        ToastService.warning('Email inválido');
+        return;
+      }
+
+      // Gerar senha provisória aleatória de 12 caracteres
+      const generatePassword = () => {
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
+        let password = '';
+        for (let i = 0; i < 12; i++) {
+          password += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        return password;
+      };
+
+      const provisionalPassword = generatePassword();
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
+          method: 'POST',
+          headers: {
+            ...TokenStorage.getAuthHeader(),
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: newUserData.name,
+            email: newUserData.email,
+            password: provisionalPassword,
+            role: newUserData.role
+          })
+        });
+
+        if (response.ok) {
+          ToastService.success(`✅ Usuário ${newUserData.name} criado! Senha provisória enviada por email.`);
+          setShowCreateUserModal(false);
+          setNewUserData({ name: '', email: '', password: '', role: 'TRANSLATOR' });
+          loadUsers();
+        } else {
+          const error = await response.json();
+          ToastService.error(`❌ Erro: ${error.message || 'Não foi possível criar usuário'}`);
+        }
+      } catch (error: any) {
+        ToastService.error(`❌ Erro ao criar usuário: ${error.message || 'Erro desconhecido'}`);
+      }
+    };
+
     const getRoleBadge = (role: string) => {
       const styles: Record<string, any> = {
         ADMIN: { bg: '#dc2626', icon: '👑' },
@@ -6399,47 +6784,83 @@ function ProductionHPOApp() {
       );
     };
 
+    // Mobile detection
+    const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+    React.useEffect(() => {
+      const handleResize = () => setIsMobile(window.innerWidth <= 768);
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
     return (
-      <div style={{ padding: '30px', maxWidth: '1800px', margin: '0 auto', backgroundColor: '#f8fafc', minHeight: '100vh' }}>
+      <div style={{ padding: isMobile ? '15px' : '30px', maxWidth: '1800px', margin: '0 auto', backgroundColor: '#f8fafc', minHeight: '100vh' }}>
         {/* Header */}
         <div style={{
           backgroundColor: 'white',
           borderRadius: '16px',
-          padding: '30px',
-          marginBottom: '30px',
+          padding: isMobile ? '20px' : '30px',
+          marginBottom: isMobile ? '15px' : '30px',
           boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+          <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'stretch' : 'center', marginBottom: '20px', gap: isMobile ? '15px' : '0' }}>
             <div>
-              <h1 style={{ margin: 0, fontSize: '32px', fontWeight: '700', color: '#1e40af', display: 'flex', alignItems: 'center', gap: '15px' }}>
+              <h1 style={{ margin: 0, fontSize: isMobile ? '24px' : '32px', fontWeight: '700', color: '#1e40af', display: 'flex', alignItems: 'center', gap: '10px' }}>
                 👥 Gestão de Usuários
               </h1>
-              <p style={{ margin: '10px 0 0 0', color: '#64748b' }}>
-                {totalUsers} usuários cadastrados na plataforma
+              <p style={{ margin: '10px 0 0 0', color: '#64748b', fontSize: isMobile ? '13px' : '14px' }}>
+                {totalUsers} usuários cadastrados
               </p>
             </div>
-            <button
-              onClick={handleExportUsers}
-              style={{
-                padding: '12px 24px',
-                backgroundColor: '#16a34a',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: '600',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px'
-              }}
-            >
-              📥 Exportar CSV
-            </button>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => setShowCreateUserModal(true)}
+                style={{
+                  padding: isMobile ? '10px 16px' : '12px 24px',
+                  backgroundColor: '#3b82f6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontSize: isMobile ? '13px' : '14px',
+                  fontWeight: '600',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  flex: isMobile ? '1' : '0'
+                }}
+              >
+                ➕ {isMobile ? 'Adicionar' : 'Adicionar Usuário'}
+              </button>
+              <button
+                onClick={handleExportUsers}
+                style={{
+                  padding: isMobile ? '10px 16px' : '12px 24px',
+                  backgroundColor: '#16a34a',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontSize: isMobile ? '13px' : '14px',
+                  fontWeight: '600',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  flex: isMobile ? '1' : '0'
+                }}
+              >
+                📥 {isMobile ? 'Exportar' : 'Exportar CSV'}
+              </button>
+            </div>
           </div>
 
-          {/* Filters */}
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: '15px', alignItems: 'end' }}>
+          {/* Filters - RESPONSIVE */}
+          <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr 1fr auto', 
+            gap: '15px', 
+            alignItems: 'end' 
+          }}>
             <div>
               <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
                 Buscar
@@ -6533,24 +6954,220 @@ function ProductionHPOApp() {
           </div>
         </div>
 
-        {/* Users Table */}
+        {/* Users Table/Cards - RESPONSIVE */}
         <div style={{
           backgroundColor: 'white',
           borderRadius: '16px',
-          padding: '30px',
+          padding: isMobile ? '15px' : '30px',
           boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
         }}>
           {loading ? (
-            <div style={{ textAlign: 'center', padding: '60px 0' }}>
+            <div style={{ textAlign: 'center', padding: isMobile ? '40px 0' : '60px 0' }}>
               <div style={{ fontSize: '48px', marginBottom: '20px' }}>⏳</div>
               <p style={{ color: '#64748b' }}>Carregando usuários...</p>
             </div>
           ) : users.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '60px 0' }}>
+            <div style={{ textAlign: 'center', padding: isMobile ? '40px 0' : '60px 0' }}>
               <div style={{ fontSize: '48px', marginBottom: '20px' }}>🔍</div>
               <p style={{ color: '#64748b' }}>Nenhum usuário encontrado</p>
             </div>
+          ) : isMobile ? (
+            /* MOBILE: Card Layout */
+            <>
+              {/* Bulk Actions Mobile */}
+              {selectedUsers.size > 0 && (
+                <div style={{
+                  backgroundColor: '#eff6ff',
+                  padding: '12px',
+                  borderRadius: '8px',
+                  marginBottom: '15px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  fontSize: '14px'
+                }}>
+                  <span style={{ fontWeight: '600', color: '#1e40af' }}>
+                    {selectedUsers.size} selecionado(s)
+                  </span>
+                  <button
+                    onClick={() => setShowBulkModal(true)}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: '#3b82f6',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      fontWeight: '600'
+                    }}
+                  >
+                    Ações
+                  </button>
+                </div>
+              )}
+
+              {/* User Cards */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {users.map((user) => (
+                  <div
+                    key={user.id}
+                    style={{
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '12px',
+                      padding: '16px',
+                      backgroundColor: selectedUsers.has(user.id) ? '#eff6ff' : 'white'
+                    }}
+                  >
+                    {/* Card Header */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'start', gap: '12px', flex: 1 }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedUsers.has(user.id)}
+                          onChange={() => toggleUserSelection(user.id)}
+                          style={{ cursor: 'pointer', width: '20px', height: '20px', marginTop: '2px' }}
+                        />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: '700', fontSize: '16px', color: '#1f2937', marginBottom: '4px' }}>
+                            {user.name}
+                          </div>
+                          <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '8px' }}>
+                            {user.email}
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                            {getRoleBadge(user.role)}
+                            {getStatusBadge(user.isActive !== false)}
+                            {user.orcidId && (
+                              <span style={{
+                                backgroundColor: '#dcfce7',
+                                color: '#15803d',
+                                padding: '4px 8px',
+                                borderRadius: '12px',
+                                fontSize: '11px',
+                                fontWeight: '600'
+                              }}>
+                                🔗 ORCID
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Card Stats */}
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(3, 1fr)',
+                      gap: '12px',
+                      marginBottom: '12px',
+                      padding: '12px',
+                      backgroundColor: '#f8fafc',
+                      borderRadius: '8px'
+                    }}>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '20px', fontWeight: '700', color: '#f59e0b' }}>
+                          {user.points || 0}
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
+                          Pontos
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '20px', fontWeight: '700', color: '#8b5cf6' }}>
+                          {user.level || 1}
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
+                          Nível
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '13px', fontWeight: '600', color: '#64748b' }}>
+                          {new Date(user.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
+                          Cadastro
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Card Action */}
+                    <button
+                      onClick={() => handleViewUser(user)}
+                      style={{
+                        width: '100%',
+                        padding: '12px',
+                        backgroundColor: '#3b82f6',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        fontWeight: '600',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px'
+                      }}
+                    >
+                      👁️ Ver Detalhes
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Pagination Mobile */}
+              <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px',
+                marginTop: '20px',
+                paddingTop: '20px',
+                borderTop: '2px solid #e5e7eb'
+              }}>
+                <div style={{ textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
+                  Página {currentPage} de {totalPages} • {totalUsers} usuários
+                </div>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                    disabled={currentPage === 1}
+                    style={{
+                      flex: 1,
+                      padding: '10px',
+                      backgroundColor: currentPage === 1 ? '#e5e7eb' : '#3b82f6',
+                      color: currentPage === 1 ? '#9ca3af' : 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
+                      fontSize: '14px',
+                      fontWeight: '600'
+                    }}
+                  >
+                    ← Anterior
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                    disabled={currentPage === totalPages}
+                    style={{
+                      flex: 1,
+                      padding: '10px',
+                      backgroundColor: currentPage === totalPages ? '#e5e7eb' : '#3b82f6',
+                      color: currentPage === totalPages ? '#9ca3af' : 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
+                      fontSize: '14px',
+                      fontWeight: '600'
+                    }}
+                  >
+                    Próxima →
+                  </button>
+                </div>
+              </div>
+            </>
           ) : (
+            /* DESKTOP: Table Layout */
             <>
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -7180,15 +7797,169 @@ function ProductionHPOApp() {
             </div>
           </div>
         )}
+
+        {/* Create User Modal */}
+        {showCreateUserModal && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0,0,0,0.7)',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              zIndex: 1001
+            }}
+            onClick={() => setShowCreateUserModal(false)}
+          >
+            <div
+              style={{
+                backgroundColor: 'white',
+                borderRadius: '16px',
+                padding: '30px',
+                maxWidth: '500px',
+                width: '100%'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 style={{ margin: '0 0 20px 0', fontSize: '24px', fontWeight: '700', color: '#1f2937' }}>
+                ➕ Adicionar Novo Usuário
+              </h3>
+
+              <div style={{ marginBottom: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                  Nome Completo *
+                </label>
+                <input
+                  type="text"
+                  value={newUserData.name}
+                  onChange={(e) => setNewUserData({ ...newUserData, name: e.target.value })}
+                  placeholder="Ex: João Silva"
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: '2px solid #e5e7eb',
+                    borderRadius: '8px',
+                    fontSize: '14px'
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                  Email *
+                </label>
+                <input
+                  type="email"
+                  value={newUserData.email}
+                  onChange={(e) => setNewUserData({ ...newUserData, email: e.target.value })}
+                  placeholder="Ex: joao@exemplo.com"
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: '2px solid #e5e7eb',
+                    borderRadius: '8px',
+                    fontSize: '14px'
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '15px', padding: '15px', backgroundColor: '#eff6ff', borderRadius: '8px', border: '1px solid #bfdbfe' }}>
+                <p style={{ margin: 0, fontSize: '13px', color: '#1e40af' }}>
+                  ℹ️ <strong>Senha Provisória:</strong> Uma senha aleatória será gerada e enviada por email para o usuário. O usuário deverá alterar a senha no primeiro login.
+                </p>
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                  Cargo *
+                </label>
+                <select
+                  value={newUserData.role}
+                  onChange={(e) => setNewUserData({ ...newUserData, role: e.target.value })}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: '2px solid #e5e7eb',
+                    borderRadius: '8px',
+                    fontSize: '14px'
+                  }}
+                >
+                  <option value="TRANSLATOR">📝 Tradutor</option>
+                  <option value="REVIEWER">✅ Revisor</option>
+                  <option value="MODERATOR">🛡️ Moderador</option>
+                  <option value="ADMIN">👑 Administrador</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  onClick={() => {
+                    setShowCreateUserModal(false);
+                    setNewUserData({ name: '', email: '', password: '', role: 'TRANSLATOR' });
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    backgroundColor: 'white',
+                    color: '#374151',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: '600'
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleCreateUser}
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    backgroundColor: '#3b82f6',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: '600'
+                  }}
+                >
+                  ➕ Criar Usuário
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
 
   // ============================================
-  // HEADER (REORGANIZADO - Dropdown "Mais")
+  // HEADER (REORGANIZADO - Dropdown "Mais" + MOBILE RESPONSIVE - Sprint 1.5)
   // ============================================
   const Header = () => {
     const [showMoreMenu, setShowMoreMenu] = useState(false);
+    const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+    const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+    // Detectar mudança de tamanho da tela
+    React.useEffect(() => {
+      const handleResize = () => {
+        const mobile = window.innerWidth <= 768;
+        setIsMobile(mobile);
+        if (!mobile) {
+          setMobileMenuOpen(false); // Fechar menu mobile ao expandir
+        }
+      };
+      
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+    }, []);
     
     return (
       <header 
@@ -7212,18 +7983,46 @@ function ProductionHPOApp() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
             <div style={{ fontSize: '1.5rem' }} role="img" aria-label="Ícone Rede">🔗</div>
             <div>
-              <div style={{ fontWeight: '600', fontSize: '18px' }}>
-                <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '600' }}>
+              <div style={{ fontWeight: '600', fontSize: isMobile ? '16px' : '18px' }}>
+                <h1 style={{ margin: 0, fontSize: isMobile ? '16px' : '18px', fontWeight: '600' }}>
                   PORTI-HPO <span role="img" aria-label={apiConnected ? 'Conectado' : 'Desconectado'}>{apiConnected ? '🟢' : '🔴'}</span>
                 </h1>
               </div>
-              <div style={{ fontSize: '12px', opacity: 0.8 }}>
-                Por ti, pela ciência, em português
-              </div>
+              {!isMobile && (
+                <div style={{ fontSize: '12px', opacity: 0.8 }}>
+                  Por ti, pela ciência, em português
+                </div>
+              )}
             </div>
           </div>
 
-          <nav role="navigation" aria-label="Menu principal" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* MOBILE: Hamburger Menu Button */}
+          {isMobile ? (
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              aria-label="Abrir menu de navegação"
+              aria-expanded={mobileMenuOpen}
+              style={{
+                padding: '10px',
+                backgroundColor: 'rgba(255,255,255,0.2)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '24px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '44px',
+                height: '44px',
+                transition: 'background-color 0.2s'
+              }}
+            >
+              {mobileMenuOpen ? '✕' : '☰'}
+            </button>
+          ) : (
+            /* DESKTOP: Full Navigation */
+            <nav role="navigation" aria-label="Menu principal" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             {/* Main Navigation - Core Actions */}
             <button
               data-page="dashboard"
@@ -7477,6 +8276,74 @@ function ProductionHPOApp() {
                   >
                     <span role="img" aria-hidden="true">💌</span> Convidar Amigos
                   </button>
+
+                  {/* CPLP Analytics - Variant Progress Dashboard */}
+                  <button
+                    onClick={() => {
+                      setCurrentPage('variant-progress');
+                      setShowMoreMenu(false);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      backgroundColor: currentPage === 'variant-progress' ? '#eff6ff' : 'white',
+                      color: currentPage === 'variant-progress' ? '#1e40af' : '#1f2937',
+                      border: 'none',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      transition: 'background-color 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (currentPage !== 'variant-progress') {
+                        e.currentTarget.style.backgroundColor = '#f9fafb';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (currentPage !== 'variant-progress') {
+                        e.currentTarget.style.backgroundColor = 'white';
+                      }
+                    }}
+                  >
+                    <span role="img" aria-hidden="true">📊</span> Progresso CPLP
+                  </button>
+
+                  {/* CPLP Analytics - Country Ranking Page */}
+                  <button
+                    onClick={() => {
+                      setCurrentPage('country-ranking');
+                      setShowMoreMenu(false);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      backgroundColor: currentPage === 'country-ranking' ? '#eff6ff' : 'white',
+                      color: currentPage === 'country-ranking' ? '#1e40af' : '#1f2937',
+                      border: 'none',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      transition: 'background-color 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (currentPage !== 'country-ranking') {
+                        e.currentTarget.style.backgroundColor = '#f9fafb';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (currentPage !== 'country-ranking') {
+                        e.currentTarget.style.backgroundColor = 'white';
+                      }
+                    }}
+                  >
+                    <span role="img" aria-hidden="true">🌍</span> Ranking Países
+                  </button>
                 </div>
               )}
             </div>
@@ -7636,7 +8503,471 @@ function ProductionHPOApp() {
               <span role="img" aria-hidden="true">🚪</span> Sair
             </button>
           </nav>
+          )}
         </div>
+
+        {/* MOBILE: Drawer Menu */}
+        {isMobile && mobileMenuOpen && (
+          <>
+            {/* Overlay (backdrop) */}
+            <div
+              onClick={() => setMobileMenuOpen(false)}
+              style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: 'rgba(0,0,0,0.5)',
+                zIndex: 999,
+                animation: 'fadeIn 0.3s ease'
+              }}
+            />
+
+            {/* Drawer (menu lateral) */}
+            <nav
+              role="navigation"
+              aria-label="Menu mobile"
+              style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                width: '80%',
+                maxWidth: '320px',
+                height: '100vh',
+                backgroundColor: 'white',
+                zIndex: 1000,
+                overflowY: 'auto',
+                boxShadow: '4px 0 12px rgba(0,0,0,0.15)',
+                animation: 'slideInLeft 0.3s ease'
+              }}
+            >
+              {/* Header do Drawer */}
+              <div style={{
+                backgroundColor: '#1e40af',
+                color: 'white',
+                padding: '20px',
+                borderBottom: '1px solid rgba(255,255,255,0.2)'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontWeight: '600', fontSize: '18px' }}>PORTI-HPO</div>
+                    <div style={{ fontSize: '12px', opacity: 0.9, marginTop: '4px' }}>
+                      {user?.name || 'Usuário'}
+                    </div>
+                    <div style={{ fontSize: '11px', opacity: 0.7, marginTop: '2px' }}>
+                      {user?.points || 0} pontos • {user?.role || 'TRANSLATOR'}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setMobileMenuOpen(false)}
+                    aria-label="Fechar menu"
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'white',
+                      fontSize: '28px',
+                      cursor: 'pointer',
+                      padding: '0',
+                      lineHeight: '1'
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              {/* Menu Items */}
+              <div style={{ padding: '10px 0' }}>
+                {/* Dashboard */}
+                <button
+                  onClick={() => {
+                    setCurrentPage('dashboard');
+                    setMobileMenuOpen(false);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '16px 20px',
+                    backgroundColor: currentPage === 'dashboard' ? '#eff6ff' : 'white',
+                    color: currentPage === 'dashboard' ? '#1e40af' : '#1f2937',
+                    border: 'none',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    borderLeft: currentPage === 'dashboard' ? '4px solid #1e40af' : '4px solid transparent',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <span style={{ fontSize: '20px' }}>🏠</span>
+                  <span style={{ fontWeight: currentPage === 'dashboard' ? '600' : '400' }}>Dashboard</span>
+                </button>
+
+                {/* Traduzir */}
+                <button
+                  onClick={() => {
+                    setCurrentPage('translate');
+                    setMobileMenuOpen(false);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '16px 20px',
+                    backgroundColor: currentPage === 'translate' ? '#eff6ff' : 'white',
+                    color: currentPage === 'translate' ? '#1e40af' : '#1f2937',
+                    border: 'none',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    borderLeft: currentPage === 'translate' ? '4px solid #1e40af' : '4px solid transparent',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <span style={{ fontSize: '20px' }}>📝</span>
+                  <span style={{ fontWeight: currentPage === 'translate' ? '600' : '400' }}>Traduzir</span>
+                </button>
+
+                {/* Revisar */}
+                <button
+                  onClick={() => {
+                    setCurrentPage('review');
+                    setMobileMenuOpen(false);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '16px 20px',
+                    backgroundColor: currentPage === 'review' ? '#eff6ff' : 'white',
+                    color: currentPage === 'review' ? '#1e40af' : '#1f2937',
+                    border: 'none',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    borderLeft: currentPage === 'review' ? '4px solid #1e40af' : '4px solid transparent',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <span style={{ fontSize: '20px' }}>✅</span>
+                  <span style={{ fontWeight: currentPage === 'review' ? '600' : '400' }}>Revisar</span>
+                </button>
+
+                {/* Ranking */}
+                <button
+                  onClick={() => {
+                    loadLeaderboard('all');
+                    setCurrentPage('leaderboard');
+                    setMobileMenuOpen(false);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '16px 20px',
+                    backgroundColor: currentPage === 'leaderboard' ? '#eff6ff' : 'white',
+                    color: currentPage === 'leaderboard' ? '#1e40af' : '#1f2937',
+                    border: 'none',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    borderLeft: currentPage === 'leaderboard' ? '4px solid #1e40af' : '4px solid transparent',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <span style={{ fontSize: '20px' }}>🏆</span>
+                  <span style={{ fontWeight: currentPage === 'leaderboard' ? '600' : '400' }}>Ranking</span>
+                </button>
+
+                {/* Divider */}
+                <div style={{
+                  height: '1px',
+                  backgroundColor: '#e5e7eb',
+                  margin: '10px 20px'
+                }} />
+
+                {/* Histórico */}
+                <button
+                  onClick={() => {
+                    loadHistory(undefined, 1);
+                    setCurrentPage('history');
+                    setMobileMenuOpen(false);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '16px 20px',
+                    backgroundColor: currentPage === 'history' ? '#eff6ff' : 'white',
+                    color: currentPage === 'history' ? '#1e40af' : '#1f2937',
+                    border: 'none',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    borderLeft: currentPage === 'history' ? '4px solid #1e40af' : '4px solid transparent',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <span style={{ fontSize: '20px' }}>📚</span>
+                  <span style={{ fontWeight: currentPage === 'history' ? '600' : '400' }}>Histórico</span>
+                </button>
+
+                {/* Diretrizes */}
+                <button
+                  onClick={() => {
+                    setCurrentPage('guidelines');
+                    setMobileMenuOpen(false);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '16px 20px',
+                    backgroundColor: currentPage === 'guidelines' ? '#eff6ff' : 'white',
+                    color: currentPage === 'guidelines' ? '#1e40af' : '#1f2937',
+                    border: 'none',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    borderLeft: currentPage === 'guidelines' ? '4px solid #1e40af' : '4px solid transparent',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <span style={{ fontSize: '20px' }}>📖</span>
+                  <span style={{ fontWeight: currentPage === 'guidelines' ? '600' : '400' }}>Diretrizes</span>
+                </button>
+
+                {/* Pontos */}
+                <button
+                  onClick={() => {
+                    setCurrentPage('points');
+                    setMobileMenuOpen(false);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '16px 20px',
+                    backgroundColor: currentPage === 'points' ? '#eff6ff' : 'white',
+                    color: currentPage === 'points' ? '#1e40af' : '#1f2937',
+                    border: 'none',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    borderLeft: currentPage === 'points' ? '4px solid #1e40af' : '4px solid transparent',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <span style={{ fontSize: '20px' }}>🎯</span>
+                  <span style={{ fontWeight: currentPage === 'points' ? '600' : '400' }}>Pontos</span>
+                </button>
+
+                {/* Convidar Amigos */}
+                <button
+                  onClick={() => {
+                    setCurrentPage('referral');
+                    setMobileMenuOpen(false);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '16px 20px',
+                    backgroundColor: currentPage === 'referral' ? '#eff6ff' : 'white',
+                    color: currentPage === 'referral' ? '#1e40af' : '#1f2937',
+                    border: 'none',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    borderLeft: currentPage === 'referral' ? '4px solid #1e40af' : '4px solid transparent',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <span style={{ fontSize: '20px' }}>💌</span>
+                  <span style={{ fontWeight: currentPage === 'referral' ? '600' : '400' }}>Convidar Amigos</span>
+                </button>
+
+                {/* Divider */}
+                <div style={{
+                  height: '1px',
+                  backgroundColor: '#e5e7eb',
+                  margin: '10px 20px'
+                }} />
+
+                {/* Perfil */}
+                <button
+                  onClick={() => {
+                    setCurrentPage('profile');
+                    setMobileMenuOpen(false);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '16px 20px',
+                    backgroundColor: currentPage === 'profile' ? '#eff6ff' : 'white',
+                    color: currentPage === 'profile' ? '#1e40af' : '#1f2937',
+                    border: 'none',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    borderLeft: currentPage === 'profile' ? '4px solid #1e40af' : '4px solid transparent',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <span style={{ fontSize: '20px' }}>👤</span>
+                  <span style={{ fontWeight: currentPage === 'profile' ? '600' : '400' }}>Perfil</span>
+                </button>
+
+                {/* Admin (se tiver permissão) */}
+                {user && RoleHelpers.canAccessAdminDashboard(user.role) && (
+                  <button
+                    onClick={() => {
+                      setCurrentPage('admin');
+                      setMobileMenuOpen(false);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '16px 20px',
+                      backgroundColor: currentPage === 'admin' ? '#fef3c7' : 'white',
+                      color: currentPage === 'admin' ? '#92400e' : '#1f2937',
+                      border: 'none',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      fontSize: '16px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      borderLeft: currentPage === 'admin' ? '4px solid #f59e0b' : '4px solid transparent',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    <span style={{ fontSize: '20px' }}>👑</span>
+                    <span style={{ fontWeight: currentPage === 'admin' ? '600' : '400' }}>Admin</span>
+                  </button>
+                )}
+
+                {/* Notificações */}
+                <button
+                  onClick={() => {
+                    if (!showNotifications) {
+                      loadNotifications(1);
+                    }
+                    setShowNotifications(!showNotifications);
+                    setMobileMenuOpen(false);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '16px 20px',
+                    backgroundColor: 'white',
+                    color: '#1f2937',
+                    border: 'none',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    justifyContent: 'space-between',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '20px' }}>🔔</span>
+                    <span>Notificações</span>
+                  </div>
+                  {unreadCount > 0 && (
+                    <span style={{
+                      backgroundColor: '#dc2626',
+                      color: 'white',
+                      borderRadius: '12px',
+                      padding: '2px 8px',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      minWidth: '20px',
+                      textAlign: 'center'
+                    }}>
+                      {unreadCount}
+                    </span>
+                  )}
+                </button>
+
+                {/* Acessibilidade */}
+                <button
+                  onClick={() => {
+                    setShowAccessibilityMenu(!showAccessibilityMenu);
+                    setMobileMenuOpen(false);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '16px 20px',
+                    backgroundColor: 'white',
+                    color: '#1f2937',
+                    border: 'none',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <span style={{ fontSize: '20px' }}>♿</span>
+                  <span>Acessibilidade</span>
+                </button>
+
+                {/* Divider */}
+                <div style={{
+                  height: '1px',
+                  backgroundColor: '#e5e7eb',
+                  margin: '10px 20px'
+                }} />
+
+                {/* Sair */}
+                <button
+                  onClick={() => {
+                    TokenStorage.remove();
+                    setUser(null);
+                    setCurrentPage('login');
+                    setSelectedTerm(null);
+                    setTranslation('');
+                    setTerms([]);
+                    setMobileMenuOpen(false);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '16px 20px',
+                    backgroundColor: 'white',
+                    color: '#dc2626',
+                    border: 'none',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    fontWeight: '600',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <span style={{ fontSize: '20px' }}>🚪</span>
+                  <span>Sair</span>
+                </button>
+              </div>
+            </nav>
+          </>
+        )}
       </header>
     );
   };
@@ -7831,6 +9162,15 @@ function ProductionHPOApp() {
     const [exportEndDate, setExportEndDate] = useState('');
     const [exportingBabelon, setExportingBabelon] = useState(false);
 
+    // Mobile detection
+    const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+    React.useEffect(() => {
+      const handleResize = () => setIsMobile(window.innerWidth <= 768);
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
     useEffect(() => {
       loadAdminDashboard();
       loadPendingForModeration();
@@ -7973,28 +9313,42 @@ function ProductionHPOApp() {
     };
 
     return (
-      <div style={{ padding: '30px', maxWidth: '1600px', margin: '0 auto', backgroundColor: '#f8fafc', minHeight: '100vh' }}>
+      <div style={{ padding: isMobile ? '15px' : '30px', maxWidth: '1600px', margin: '0 auto', backgroundColor: '#f8fafc', minHeight: '100vh' }}>
         {/* Header */}
         <div style={{
           backgroundColor: 'white',
           borderRadius: '16px',
-          padding: '30px',
-          marginBottom: '30px',
+          padding: isMobile ? '20px' : '30px',
+          marginBottom: isMobile ? '15px' : '30px',
           boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ 
+            display: 'flex', 
+            flexDirection: isMobile ? 'column' : 'row',
+            justifyContent: 'space-between', 
+            alignItems: isMobile ? 'stretch' : 'center',
+            gap: isMobile ? '15px' : '0'
+          }}>
             <div>
-              <h1 style={{ margin: 0, fontSize: '32px', fontWeight: '700', color: '#1e40af', display: 'flex', alignItems: 'center', gap: '15px' }}>
-                👑 Dashboard Administrativo
+              <h1 style={{ 
+                margin: 0, 
+                fontSize: isMobile ? '24px' : '32px', 
+                fontWeight: '700', 
+                color: '#1e40af', 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: isMobile ? '10px' : '15px' 
+              }}>
+                👑 {isMobile ? 'Admin' : 'Dashboard Administrativo'}
               </h1>
-              <p style={{ margin: '10px 0 0 0', color: '#64748b' }}>
+              <p style={{ margin: '10px 0 0 0', color: '#64748b', fontSize: isMobile ? '13px' : '14px' }}>
                 Moderação, aprovação e gestão da plataforma HPO-PT
               </p>
             </div>
             <button
               onClick={() => setCurrentPage('admin-users')}
               style={{
-                padding: '12px 24px',
+                padding: isMobile ? '14px' : '12px 24px',
                 backgroundColor: '#8b5cf6',
                 color: 'white',
                 border: 'none',
@@ -8004,8 +9358,10 @@ function ProductionHPOApp() {
                 fontWeight: '600',
                 display: 'flex',
                 alignItems: 'center',
+                justifyContent: 'center',
                 gap: '8px',
-                transition: 'background-color 0.2s'
+                transition: 'background-color 0.2s',
+                width: isMobile ? '100%' : 'auto'
               }}
               onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#7c3aed'}
               onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#8b5cf6'}
@@ -8244,44 +9600,76 @@ function ProductionHPOApp() {
         <div style={{
           backgroundColor: 'white',
           borderRadius: '16px',
-          padding: '30px',
+          padding: isMobile ? '15px' : '30px',
           boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
         }}>
-          <h2 style={{ margin: '0 0 20px 0', fontSize: '24px', fontWeight: '700', color: '#1f2937' }}>
+          <h2 style={{ 
+            margin: '0 0 20px 0', 
+            fontSize: isMobile ? '20px' : '24px', 
+            fontWeight: '700', 
+            color: '#1f2937' 
+          }}>
             📋 Fila de Moderação ({pendingTranslations.length})
           </h2>
 
           {pendingTranslations.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '60px', color: '#9ca3af' }}>
-              <div style={{ fontSize: '48px', marginBottom: '20px' }}>🎉</div>
-              <div style={{ fontSize: '18px', fontWeight: '600' }}>
+            <div style={{ textAlign: 'center', padding: isMobile ? '40px 20px' : '60px', color: '#9ca3af' }}>
+              <div style={{ fontSize: isMobile ? '36px' : '48px', marginBottom: '20px' }}>🎉</div>
+              <div style={{ fontSize: isMobile ? '16px' : '18px', fontWeight: '600' }}>
                 Nenhuma tradução pendente de aprovação!
               </div>
             </div>
           ) : (
-            <div style={{ display: 'grid', gap: '15px' }}>
+            <div style={{ display: 'grid', gap: isMobile ? '12px' : '15px' }}>
               {pendingTranslations.map(trans => (
                 <div
                   key={trans.id}
                   style={{
                     border: '1px solid #e5e7eb',
                     borderRadius: '12px',
-                    padding: '20px',
+                    padding: isMobile ? '16px' : '20px',
                     backgroundColor: '#f9fafb'
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+                  <div style={{ 
+                    display: 'flex', 
+                    flexDirection: isMobile ? 'column' : 'row',
+                    justifyContent: 'space-between', 
+                    alignItems: isMobile ? 'stretch' : 'start',
+                    gap: isMobile ? '15px' : '0'
+                  }}>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: '16px', fontWeight: '600', color: '#1e40af', marginBottom: '8px' }}>
+                      <div style={{ 
+                        fontSize: isMobile ? '14px' : '16px', 
+                        fontWeight: '600', 
+                        color: '#1e40af', 
+                        marginBottom: '8px',
+                        wordBreak: 'break-word'
+                      }}>
                         {trans.term.hpoId} - {trans.term.labelEn}
                       </div>
-                      <div style={{ fontSize: '18px', fontWeight: '500', color: '#1f2937', marginBottom: '8px' }}>
+                      <div style={{ 
+                        fontSize: isMobile ? '16px' : '18px', 
+                        fontWeight: '500', 
+                        color: '#1f2937', 
+                        marginBottom: '8px',
+                        wordBreak: 'break-word'
+                      }}>
                         📝 "{trans.labelPt}"
                       </div>
-                      <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '12px' }}>
+                      <div style={{ 
+                        fontSize: isMobile ? '13px' : '14px', 
+                        color: '#6b7280', 
+                        marginBottom: '12px' 
+                      }}>
                         Tradutor: {trans.user.name} (Nível {trans.user.level}, {trans.user.points} pts)
                       </div>
-                      <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                      <div style={{ 
+                        display: 'flex', 
+                        gap: '10px', 
+                        alignItems: 'center',
+                        flexWrap: 'wrap'
+                      }}>
                         <span style={{
                           padding: '4px 12px',
                           backgroundColor: trans.confidence >= 4 ? '#dcfce7' : trans.confidence >= 3 ? '#fef3c7' : '#fee2e2',
@@ -8297,24 +9685,31 @@ function ProductionHPOApp() {
                         </span>
                       </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '10px', marginLeft: '20px' }}>
+                    <div style={{ 
+                      display: 'flex', 
+                      flexDirection: isMobile ? 'column' : 'row',
+                      gap: '10px', 
+                      marginLeft: isMobile ? '0' : '20px' 
+                    }}>
                       <button
                         onClick={() => {
                           setSelectedTranslation(trans);
                           setShowApproveModal(true);
                         }}
                         style={{
-                          padding: '10px 20px',
+                          padding: isMobile ? '14px' : '10px 20px',
                           backgroundColor: '#10b981',
                           color: 'white',
                           border: 'none',
                           borderRadius: '8px',
                           cursor: 'pointer',
                           fontWeight: '600',
-                          fontSize: '14px'
+                          fontSize: '14px',
+                          width: isMobile ? '100%' : 'auto',
+                          minHeight: isMobile ? '44px' : 'auto'
                         }}
                       >
-                        ✅ Aprovar Tradução
+                        ✅ {isMobile ? 'Aprovar' : 'Aprovar Tradução'}
                       </button>
                       <button
                         onClick={() => {
@@ -8322,14 +9717,16 @@ function ProductionHPOApp() {
                           setShowRejectModal(true);
                         }}
                         style={{
-                          padding: '10px 20px',
+                          padding: isMobile ? '14px' : '10px 20px',
                           backgroundColor: '#ef4444',
                           color: 'white',
                           border: 'none',
                           borderRadius: '8px',
                           cursor: 'pointer',
                           fontWeight: '600',
-                          fontSize: '14px'
+                          fontSize: '14px',
+                          width: isMobile ? '100%' : 'auto',
+                          minHeight: isMobile ? '44px' : 'auto'
                         }}
                       >
                         ❌ Rejeitar
@@ -9250,6 +10647,24 @@ function ProductionHPOApp() {
             transform: translateY(-5px);
           }
         }
+        
+        @keyframes fadeIn {
+          from {
+            opacity: 0;
+          }
+          to {
+            opacity: 1;
+          }
+        }
+        
+        @keyframes slideInLeft {
+          from {
+            transform: translateX(-100%);
+          }
+          to {
+            transform: translateX(0);
+          }
+        }
       `}</style>
 
       {/* Rate Limiting Banner (Task #18) */}
@@ -9332,7 +10747,6 @@ function ProductionHPOApp() {
       
       {/* Main Content with ARIA landmark */}
       <main id="main-content" role="main" aria-label="Conteúdo principal">
-        {console.log('🎨 RENDERIZANDO - currentPage:', currentPage, 'user:', user ? 'EXISTE' : 'NULL', 'isLoadingAuth:', isLoadingAuth)}
         
         {currentPage === 'home' && <HomePage />}
         {currentPage === 'login' && <LoginPage />}
@@ -9390,6 +10804,21 @@ function ProductionHPOApp() {
         {currentPage === 'guidelines' && user && <GuidelinesPage onBack={() => setCurrentPage('dashboard')} />}
         {currentPage === 'points' && user && <GamificationPage />}
         {currentPage === 'referral' && user && <ReferralPage />}
+        
+        {/* CPLP Analytics Pages */}
+        {currentPage === 'variant-progress' && user && (
+          <VariantProgressDashboard 
+            apiBaseUrl={API_BASE_URL}
+            authHeader={TokenStorage.getAuthHeader()}
+          />
+        )}
+        {currentPage === 'country-ranking' && user && (
+          <CountryRankingPage 
+            apiBaseUrl={API_BASE_URL}
+            authHeader={TokenStorage.getAuthHeader()}
+            onNavigate={(page) => setCurrentPage(page as any)}
+          />
+        )}
       </main>
 
       {/* Toast Notifications */}
